@@ -142,6 +142,7 @@
     <button data-view="dashboard" class="active">Dashboard</button>
     <button data-view="products">Products</button>
     <button data-view="movements">Movements</button>
+    <button data-view="contacts">Contacts</button>
     <button data-view="reports">Reports</button>
     <button data-view="settings">Settings</button>
   </nav>
@@ -174,6 +175,17 @@
         <div class="field"><label>To</label><input type="date" id="movTo" onchange="renderMovements()"></div>
       </div>
       <div class="table-wrap" id="movTable"></div>
+    </section>
+
+    <section class="view" id="contacts">
+      <div class="row"><div><div class="section-title serif">Contacts</div><div class="section-sub">Suppliers and customers, with outstanding balances</div></div>
+        <button class="btn primary" id="addContactBtn" onclick="openContact()">+ Add</button></div>
+      <div class="filters">
+        <div class="field"><label>Show</label><select id="contactKind" onchange="renderContacts()">
+          <option value="customers">Customers</option><option value="suppliers">Suppliers</option></select></div>
+        <div class="field search"><label>Search</label><input id="contactSearch" placeholder="Name…" oninput="renderContacts()"></div>
+      </div>
+      <div class="table-wrap" id="contactTable"></div>
     </section>
 
     <section class="view" id="reports">
@@ -243,6 +255,7 @@
       <div class="field"><label>Sale price</label><input id="pSale" type="number" step="any" value="0"></div>
     </div>
     <div class="field"><label>Reorder level</label><input id="pReorder" type="number" step="any" value="0"></div>
+    <div class="field"><label>Default supplier (optional)</label><select id="pSupplier"></select></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal('prodOverlay')">Cancel</button>
       <button class="btn primary" onclick="saveProduct()">Save</button>
@@ -266,6 +279,11 @@
       <div class="field"><label id="mQtyLabel">Quantity</label><input id="mQty" type="number" step="any"></div>
       <div class="field"><label id="mPriceLabel">Unit price</label><input id="mPrice" type="number" step="any"></div>
     </div>
+    <div class="grid2" id="mPartyRow">
+      <div class="field"><label id="mPartyLabel">Customer</label><select id="mParty"></select></div>
+      <div class="field"><label>Payment</label><select id="mPaid">
+        <option value="true">Paid</option><option value="false">On credit</option></select></div>
+    </div>
     <div class="field"><label>Reference (invoice / note)</label><input id="mRef"></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal('movOverlay')">Cancel</button>
@@ -288,6 +306,24 @@
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal('inviteOverlay')">Cancel</button>
       <button class="btn primary" onclick="sendInvite()">Add member</button>
+    </div>
+  </div>
+</div>
+
+<!-- Contact modal -->
+<div class="overlay" id="contactOverlay">
+  <div class="modal">
+    <h3 class="serif" id="contactTitle">Add contact</h3>
+    <input type="hidden" id="cId"><input type="hidden" id="cKind">
+    <div class="field"><label>Name</label><input id="cName" placeholder="e.g. Kigali Wholesale Ltd"></div>
+    <div class="grid2">
+      <div class="field"><label>Phone</label><input id="cPhone"></div>
+      <div class="field"><label>Email</label><input id="cEmail" type="email"></div>
+    </div>
+    <div class="field"><label>Note</label><input id="cNote" placeholder="optional"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal('contactOverlay')">Cancel</button>
+      <button class="btn primary" onclick="saveContact()">Save</button>
     </div>
   </div>
 </div>
@@ -326,12 +362,13 @@ function setMeta(k,v){return put('meta',{k,v});}
 
 /* ---------- State ---------- */
 let session=null, orgId=null, role='staff', org={name:'StockTrack',currency:'RWF',costing:'standard'};
-let products=[], movements=[];
+let products=[], movements=[], suppliers=[], customers=[];
 let signupMode=false, syncing=false;
 
 const TABLES=['suppliers','customers','products','movements'];
 const can = {
   editProducts: ()=>['owner','manager'].includes(role),
+  editContacts: ()=>['owner','manager'].includes(role),
   delete:       ()=>['owner','manager'].includes(role),
   manageTeam:   ()=>role==='owner',
   changeOrg:    ()=>role==='owner',
@@ -476,13 +513,22 @@ function inventoryValue(upto){return products.reduce((s,p)=>s+qtyOnHand(p.id,upt
 /* ============================================================
    RENDER
    ============================================================ */
-function renderAll(){renderDashboard();renderProducts();renderMovements();renderTeamUI();}
+function renderAll(){renderDashboard();renderProducts();renderMovements();renderContacts();renderTeamUI();}
 function applyRoleUI(){
   document.getElementById('addProdBtn').style.display=can.editProducts()?'':'none';
-  document.getElementById('fab').style.display = (currentView()==='products'&&!can.editProducts())?'none':'grid';
+  document.getElementById('addContactBtn').style.display=can.editContacts()?'':'none';
+  const v=currentView();
+  const hideFab=(v==='products'&&!can.editProducts())||(v==='contacts'&&!can.editContacts());
+  document.getElementById('fab').style.display=hideFab?'none':'grid';
 }
 function currentView(){return document.querySelector('nav.tabs button.active').dataset.view;}
-function quickAdd(){currentView()==='movements'?openMovement():(can.editProducts()?openProduct():openMovement());}
+function quickAdd(){
+  const v=currentView();
+  if(v==='movements')return openMovement();
+  if(v==='contacts')return openContact();
+  if(v==='products')return can.editProducts()?openProduct():openMovement();
+  return can.editProducts()?openProduct():openMovement();
+}
 
 document.getElementById('tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
   document.querySelectorAll('nav.tabs button').forEach(x=>x.classList.remove('active'));
@@ -490,7 +536,8 @@ document.getElementById('tabs').addEventListener('click',e=>{const b=e.target.cl
   b.classList.add('active');document.getElementById(b.dataset.view).classList.add('active');
   applyRoleUI();
   const v=b.dataset.view;
-  if(v==='dashboard')renderDashboard();if(v==='products')renderProducts();if(v==='movements')renderMovements();if(v==='settings')renderSettings();
+  if(v==='dashboard')renderDashboard();if(v==='products')renderProducts();if(v==='movements')renderMovements();
+  if(v==='contacts')renderContacts();if(v==='settings')renderSettings();
 });
 
 function renderDashboard(){
@@ -498,11 +545,15 @@ function renderDashboard(){
   const invVal=inventoryValue();
   const low=products.filter(p=>Number(p.reorder_level)>0&&qtyOnHand(p.id)<=Number(p.reorder_level));
   const retail=products.reduce((s,p)=>s+qtyOnHand(p.id)*(Number(p.sale_price)||0),0);
+  const receivable=customers.filter(c=>!c.deleted).reduce((s,c)=>s+contactBalance('customers',c.id),0);
+  const payable=suppliers.filter(s=>!s.deleted).reduce((s,x)=>s+contactBalance('suppliers',x.id),0);
   dashCards.innerHTML=`
     <div class="card"><div class="label">Inventory value (cost)</div><div class="value">${fmt(invVal)}</div><div class="sub">${products.length} products</div></div>
     <div class="card"><div class="label">Retail value</div><div class="value">${fmt(retail)}</div><div class="sub">if all stock sold</div></div>
     <div class="card"><div class="label">Potential margin</div><div class="value small ${retail-invVal>=0?'pos':'neg'}">${fmt(retail-invVal)}</div></div>
-    <div class="card"><div class="label">Low stock items</div><div class="value ${low.length?'neg':'pos'}">${low.length}</div></div>`;
+    <div class="card"><div class="label">Low stock items</div><div class="value ${low.length?'neg':'pos'}">${low.length}</div></div>
+    <div class="card"><div class="label">Receivable (unpaid sales)</div><div class="value small ${receivable>0?'neg':'pos'}">${fmt(receivable)}</div></div>
+    <div class="card"><div class="label">Payable (unpaid purchases)</div><div class="value small ${payable>0?'warn':'pos'}">${fmt(payable)}</div></div>`;
   lowStock.innerHTML=low.length?`<table><thead><tr><th>Product</th><th>SKU</th><th class="num">On hand</th><th class="num">Reorder at</th></tr></thead><tbody>
     ${low.map(p=>`<tr><td>${esc(p.name)}</td><td class="muted">${esc(p.sku||'')}</td>
       <td class="num"><span class="pill low">${num(qtyOnHand(p.id))} ${esc(p.unit||'')}</span></td>
@@ -527,11 +578,13 @@ function renderProducts(){
 }
 function openProduct(id){
   if(!can.editProducts()){toast('Only owners and managers can edit products.');return;}
+  pSupplier.innerHTML='<option value="">— none —</option>'+suppliers.filter(s=>!s.deleted).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
   if(id){const p=products.find(x=>x.id===id);prodTitle.textContent='Edit product';
     pId.value=p.id;pSku.value=p.sku||'';pCategory.value=p.category||'';pName.value=p.name||'';pUnit.value=p.unit||'';
     pOpening.value=p.opening_qty||0;pCost.value=p.cost_price||0;pSale.value=p.sale_price||0;pReorder.value=p.reorder_level||0;
+    pSupplier.value=p.supplier_id||'';
   }else{prodTitle.textContent='Add product';['pId','pSku','pCategory','pName'].forEach(i=>document.getElementById(i).value='');
-    pUnit.value='pcs';pOpening.value=0;pCost.value=0;pSale.value=0;pReorder.value=0;}
+    pUnit.value='pcs';pOpening.value=0;pCost.value=0;pSale.value=0;pReorder.value=0;pSupplier.value='';}
   document.getElementById('prodOverlay').classList.add('open');
 }
 async function saveProduct(){
@@ -539,18 +592,29 @@ async function saveProduct(){
   const id=pId.value||crypto.randomUUID();
   const existing=pId.value?await getOne('products',id):null;
   const p={...(existing||{}),id,sku:pSku.value.trim(),category:pCategory.value.trim(),name:pName.value.trim(),unit:pUnit.value.trim(),
-    opening_qty:+pOpening.value||0,cost_price:+pCost.value||0,sale_price:+pSale.value||0,reorder_level:+pReorder.value||0,deleted:false};
+    opening_qty:+pOpening.value||0,cost_price:+pCost.value||0,sale_price:+pSale.value||0,reorder_level:+pReorder.value||0,
+    supplier_id:pSupplier.value||null,deleted:false};
   await localWrite('products',p);
   products=await getAll('products');closeModal('prodOverlay');renderProducts();renderDashboard();
 }
+function fillParty(t){
+  const list=(t==='in'?suppliers:customers).filter(c=>!c.deleted);
+  mPartyLabel.textContent=t==='in'?'Supplier':'Customer';
+  mParty.innerHTML='<option value="">— none —</option>'+list.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+}
 function onMovTypeChange(){const t=mType.value;
   mPriceLabel.textContent=t==='out'?'Sale price (unit)':t==='in'?'Purchase cost (unit)':'Unit cost';
-  mQtyLabel.textContent=t==='adjustment'?'Quantity (+/-)':'Quantity';}
+  mQtyLabel.textContent=t==='adjustment'?'Quantity (+/-)':'Quantity';
+  document.getElementById('mPartyRow').style.display=t==='adjustment'?'none':'grid';
+  if(t!=='adjustment')fillParty(t);
+}
 function openMovement(){
   const live=products.filter(p=>!p.deleted);
   if(!live.length){toast('Add a product first.');return;}
   mProduct.innerHTML=live.map(p=>`<option value="${p.id}">${esc(p.name)} ${p.sku?'('+esc(p.sku)+')':''}</option>`).join('');
-  mType.value='in';mDate.value=today();mQty.value='';mPrice.value='';mRef.value='';onMovTypeChange();
+  mType.value='in';mDate.value=today();mQty.value='';mPrice.value='';mRef.value='';mPaid.value='true';onMovTypeChange();
+  // default the supplier to the product's linked supplier
+  mProduct.onchange=()=>{const p=products.find(x=>x.id===mProduct.value);if(mType.value==='in'&&p&&p.supplier_id)mParty.value=p.supplier_id;};
   document.getElementById('movOverlay').classList.add('open');
 }
 async function saveMovement(){
@@ -559,17 +623,27 @@ async function saveMovement(){
   let price=+mPrice.value;if(!price)price=mType.value==='out'?(p.sale_price||0):(p.cost_price||0);
   const m={id:crypto.randomUUID(),product_id:mProduct.value,type:mType.value,
     qty:mType.value==='adjustment'?qty:Math.abs(qty),unit_price:price,date:mDate.value||today(),
-    reference:mRef.value.trim(),paid:true,deleted:false};
+    reference:mRef.value.trim(),paid:mType.value==='adjustment'?true:(mPaid.value==='true'),
+    supplier_id:mType.value==='in'?(mParty.value||null):null,
+    customer_id:mType.value==='out'?(mParty.value||null):null,deleted:false};
   await localWrite('movements',m);
   movements=await getAll('movements');closeModal('movOverlay');renderMovements();renderDashboard();
+}
+function partyName(m){
+  if(m.type==='in'&&m.supplier_id){const s=suppliers.find(x=>x.id===m.supplier_id);return s?s.name:'';}
+  if(m.type==='out'&&m.customer_id){const c=customers.find(x=>x.id===m.customer_id);return c?c.name:'';}
+  return '';
 }
 function renderMovements(){
   const t=movType.value,f=movFrom.value,to=movTo.value;
   let list=movements.filter(m=>!m.deleted&&(!t||m.type===t)&&(!f||m.date>=f)&&(!to||m.date<=to)).sort((a,b)=>b.date.localeCompare(a.date)||(b.updated_at||'').localeCompare(a.updated_at||''));
-  movTable.innerHTML=list.length?`<table><thead><tr><th>Date</th><th>Product</th><th>Type</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Value</th><th>Ref</th>${can.delete()?'<th></th>':''}</tr></thead><tbody>
+  movTable.innerHTML=list.length?`<table><thead><tr><th>Date</th><th>Product</th><th>Type</th><th>Party</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Value</th><th>Payment</th><th>Ref</th>${can.delete()?'<th></th>':''}</tr></thead><tbody>
   ${list.map(m=>{const p=products.find(x=>x.id===m.product_id)||{name:'(deleted)'};const cls=m.type==='in'?'in':m.type==='out'?'out':'adj';
+    const credit=m.type!=='adjustment'&&m.paid===false;
     return `<tr><td>${m.date}</td><td>${esc(p.name)}</td><td><span class="pill ${cls}">${m.type}</span></td>
+      <td class="muted">${esc(partyName(m))}</td>
       <td class="num">${num(m.qty)}</td><td class="num">${num(m.unit_price)}</td><td class="num">${fmt(Math.abs(m.qty)*m.unit_price)}</td>
+      <td>${m.type==='adjustment'?'':(credit?'<span class="pill out">credit</span>':'<span class="pill in">paid</span>')}</td>
       <td class="muted">${esc(m.reference||'')}</td>
       ${can.delete()?`<td class="num"><button class="btn danger small" onclick="delMovement('${m.id}')">✕</button></td>`:''}</tr>`;}).join('')}</tbody></table>`
     :'<div class="empty">No movements for this filter.</div>';
@@ -581,7 +655,57 @@ async function delMovement(id){
   movements=await getAll('movements');renderMovements();renderDashboard();
 }
 
-/* ---------- Reports ---------- */
+/* ---------- Contacts (suppliers & customers) ---------- */
+// outstanding balance: unpaid sales = receivable (customer); unpaid purchases = payable (supplier)
+function contactBalance(kind,id){
+  const type=kind==='customers'?'out':'in';
+  const key=kind==='customers'?'customer_id':'supplier_id';
+  return movements.filter(m=>!m.deleted&&m.type===type&&m[key]===id&&m.paid===false)
+    .reduce((s,m)=>s+Math.abs(m.qty)*m.unit_price,0);
+}
+function contactTotal(kind,id){
+  const type=kind==='customers'?'out':'in';
+  const key=kind==='customers'?'customer_id':'supplier_id';
+  return movements.filter(m=>!m.deleted&&m.type===type&&m[key]===id)
+    .reduce((s,m)=>s+Math.abs(m.qty)*m.unit_price,0);
+}
+function renderContacts(){
+  const kind=contactKind.value; // 'customers' | 'suppliers'
+  const data=(kind==='customers'?customers:suppliers).filter(c=>!c.deleted);
+  const q=(contactSearch.value||'').toLowerCase();
+  const list=data.filter(c=>(c.name||'').toLowerCase().includes(q)).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  const balCol=kind==='customers'?'Receivable':'Payable';
+  contactTable.innerHTML=list.length?`<table><thead><tr><th>Name</th><th>Phone</th><th class="num">Total ${kind==='customers'?'sales':'purchases'}</th><th class="num">${balCol} (unpaid)</th>${can.editContacts()?'<th></th>':''}</tr></thead><tbody>
+  ${list.map(c=>{const bal=contactBalance(kind,c.id);return `<tr>
+    <td><strong>${esc(c.name)}</strong>${c.email?`<div class="muted" style="font-size:12px">${esc(c.email)}</div>`:''}</td>
+    <td class="muted">${esc(c.phone||'')}</td>
+    <td class="num">${fmt(contactTotal(kind,c.id))}</td>
+    <td class="num ${bal>0?'neg':''}">${fmt(bal)}</td>
+    ${can.editContacts()?`<td class="num"><button class="btn ghost small" onclick="openContact('${kind}','${c.id}')">Edit</button></td>`:''}</tr>`;}).join('')}</tbody>
+    <tfoot><tr style="font-weight:700;background:#faf7f0"><td>Total outstanding ${balCol.toLowerCase()}</td><td></td><td></td>
+      <td class="num neg">${fmt(list.reduce((s,c)=>s+contactBalance(kind,c.id),0))}</td>${can.editContacts()?'<td></td>':''}</tr></tfoot></table>`
+    :`<div class="empty">No ${kind} yet.</div>`;
+}
+function openContact(kind,id){
+  if(!can.editContacts()){toast('Only owners and managers can manage contacts.');return;}
+  kind=kind||contactKind.value;
+  cKind.value=kind;
+  const singular=kind==='customers'?'customer':'supplier';
+  if(id){const c=(kind==='customers'?customers:suppliers).find(x=>x.id===id);
+    contactTitle.textContent='Edit '+singular;cId.value=c.id;cName.value=c.name||'';cPhone.value=c.phone||'';cEmail.value=c.email||'';cNote.value=c.note||'';
+  }else{contactTitle.textContent='Add '+singular;cId.value='';cName.value='';cPhone.value='';cEmail.value='';cNote.value='';}
+  document.getElementById('contactOverlay').classList.add('open');
+}
+async function saveContact(){
+  if(!cName.value.trim()){toast('Name is required');return;}
+  const kind=cKind.value, table=kind; // store name === table name
+  const id=cId.value||crypto.randomUUID();
+  const existing=cId.value?await getOne(table,id):null;
+  const c={...(existing||{}),id,name:cName.value.trim(),phone:cPhone.value.trim(),email:cEmail.value.trim(),note:cNote.value.trim(),deleted:false};
+  await localWrite(table,c);
+  if(kind==='customers')customers=await getAll('customers');else suppliers=await getAll('suppliers');
+  closeModal('contactOverlay');renderContacts();
+}
 function runReport(){
   const f=repFrom.value||'1970-01-01',t=repTo.value||today();
   const inP=m=>!m.deleted&&m.date>=f&&m.date<=t;
@@ -669,7 +793,7 @@ async function changeRole(uid,newRole){
 /* ============================================================
    BOOT
    ============================================================ */
-async function loadLocal(){products=await getAll('products');movements=await getAll('movements');}
+async function loadLocal(){products=await getAll('products');movements=await getAll('movements');suppliers=await getAll('suppliers');customers=await getAll('customers');}
 function enterApp(){
   document.getElementById('auth').style.display='none';
   document.getElementById('app').style.display='block';
