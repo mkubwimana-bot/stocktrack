@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0f3d2e" />
+<link rel="manifest" href="manifest.json" />
+<title>StockTrack — Team Inventory & Reports</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Spline+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f4f1ea;--surface:#fffdf8;--ink:#1c2620;--muted:#5e6b62;--line:#e2dccf;
+    --green:#0f3d2e;--green-soft:#16513c;--accent:#c8742f;--pos:#1f7a4d;--neg:#b2402f;--warn:#b8860b;
+    --shadow:0 1px 2px rgba(28,38,32,.06),0 8px 24px rgba(28,38,32,.06);--radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:'Spline Sans',system-ui,sans-serif;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;font-size:15px;line-height:1.5}
+  h1,h2,h3,.serif{font-family:'Fraunces',Georgia,serif}
+  .app{max-width:1100px;margin:0 auto;padding:0 16px 120px;display:none}
+  header.top{position:sticky;top:0;z-index:30;background:var(--green);color:#f4f1ea;margin:0 -16px;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid var(--accent)}
+  header.top .brand{display:flex;align-items:center;gap:10px}
+  header.top .logo{width:30px;height:30px;border-radius:8px;background:var(--accent);display:grid;place-items:center;font-family:'Fraunces',serif;font-weight:700;color:#fff;font-size:18px}
+  header.top h1{font-size:19px;font-weight:600}
+  header.top .right{display:flex;align-items:center;gap:14px}
+  .sync{display:flex;align-items:center;gap:7px;font-size:12.5px;opacity:.9}
+  .dot{width:8px;height:8px;border-radius:50%;background:#7fd1a8;box-shadow:0 0 0 3px rgba(127,209,168,.2)}
+  .dot.off{background:#e0a45c;box-shadow:0 0 0 3px rgba(224,164,92,.2)}
+  .dot.syncing{background:#f0d264;animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.4}}
+  nav.tabs{display:flex;gap:4px;overflow-x:auto;background:var(--green);margin:0 -16px;padding:0 12px;position:sticky;top:60px;z-index:29;-webkit-overflow-scrolling:touch}
+  nav.tabs button{background:none;border:none;color:#cfe0d6;font:inherit;font-size:14px;padding:11px 14px 13px;cursor:pointer;white-space:nowrap;border-bottom:3px solid transparent}
+  nav.tabs button.active{color:#fff;border-bottom-color:var(--accent);font-weight:600}
+  main{padding-top:22px}
+  .view{display:none;animation:fade .25s ease}
+  .view.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .section-title{font-size:22px;font-weight:600}
+  .section-sub{color:var(--muted);font-size:13.5px;margin-bottom:18px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:22px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+  .card .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .card .value{font-family:'Fraunces',serif;font-size:25px;font-weight:600;margin-top:6px;line-height:1.1}
+  .card .value.small{font-size:20px}
+  .card .sub{font-size:12.5px;color:var(--muted);margin-top:4px}
+  .pos{color:var(--pos)}.neg{color:var(--neg)}.warn{color:var(--warn)}
+  button.btn{font:inherit;font-weight:600;font-size:14px;border-radius:10px;padding:10px 16px;cursor:pointer;border:1px solid transparent;transition:.15s}
+  .btn.primary{background:var(--green);color:#fff}.btn.primary:hover{background:var(--green-soft)}
+  .btn.ghost{background:var(--surface);color:var(--green);border-color:var(--line)}.btn.ghost:hover{border-color:var(--green)}
+  .btn.small{padding:6px 11px;font-size:13px}
+  .btn.danger{background:none;color:var(--neg);border-color:transparent}
+  .btn[disabled]{opacity:.4;cursor:not-allowed}
+  .table-wrap{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line)}
+  th{font-size:11.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);background:#faf7f0;font-weight:600}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:#faf7f0}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:99px}
+  .pill.in{background:#e3f1e9;color:var(--pos)}.pill.out{background:#f8e6e2;color:var(--neg)}.pill.adj{background:#f3ecda;color:var(--warn)}
+  .pill.low{background:#f8e6e2;color:var(--neg)}
+  .pill.role{background:#e8efe9;color:var(--green);text-transform:capitalize}
+  .muted{color:var(--muted)}
+  .empty{padding:40px 20px;text-align:center;color:var(--muted)}
+  .overlay{position:fixed;inset:0;background:rgba(20,28,23,.45);display:none;z-index:50;align-items:flex-end;justify-content:center}
+  .overlay.open{display:flex}
+  .modal{background:var(--surface);width:100%;max-width:520px;border-radius:18px 18px 0 0;padding:22px 20px 28px;max-height:92vh;overflow:auto;animation:slideup .25s ease}
+  @keyframes slideup{from{transform:translateY(30px);opacity:.6}to{transform:none;opacity:1}}
+  @media(min-width:600px){.overlay{align-items:center}.modal{border-radius:18px}}
+  .modal h3{font-size:20px;margin-bottom:16px}
+  .field{margin-bottom:13px}
+  .field label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:5px;font-weight:500}
+  .field input,.field select,.field textarea{width:100%;font:inherit;font-size:15px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink)}
+  .field input:focus,.field select:focus{outline:none;border-color:var(--green)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .modal-actions{display:flex;gap:10px;margin-top:18px}
+  .modal-actions .btn{flex:1}
+  .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
+  .filters .field{margin:0}
+  .search{flex:1;min-width:160px}
+  .fab{position:fixed;right:18px;bottom:24px;z-index:40;border:none;background:var(--accent);color:#fff;width:56px;height:56px;border-radius:50%;font-size:28px;cursor:pointer;box-shadow:0 6px 20px rgba(200,116,47,.45);display:grid;place-items:center}
+  .report-head{display:flex;justify-content:space-between;align-items:baseline;margin:24px 0 10px}
+  .report-head h3{font-size:18px}
+  .note{font-size:12.5px;color:var(--muted);background:#faf7f0;border:1px solid var(--line);border-radius:10px;padding:10px 13px;margin-top:14px}
+  /* Auth screen */
+  #auth{display:flex;min-height:100vh;align-items:center;justify-content:center;padding:20px}
+  .auth-card{background:var(--surface);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);padding:30px 26px;width:100%;max-width:400px}
+  .auth-card .logo{width:48px;height:48px;border-radius:12px;background:var(--green);display:grid;place-items:center;font-family:'Fraunces',serif;font-weight:700;color:#fff;font-size:26px;margin-bottom:16px}
+  .auth-card h2{font-size:24px;margin-bottom:4px}
+  .auth-card p.sub{color:var(--muted);font-size:14px;margin-bottom:20px}
+  .auth-toggle{text-align:center;margin-top:14px;font-size:13.5px;color:var(--muted)}
+  .auth-toggle a{color:var(--green);font-weight:600;cursor:pointer}
+  .err{background:#f8e6e2;color:var(--neg);font-size:13px;padding:9px 12px;border-radius:9px;margin-bottom:12px;display:none}
+  .toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:11px 18px;border-radius:99px;font-size:13.5px;z-index:80;opacity:0;transition:.25s;pointer-events:none}
+  .toast.show{opacity:1}
+  .setup-banner{background:#fbe6cf;border:1px solid var(--accent);color:#7a4a16;padding:12px 16px;border-radius:12px;margin-bottom:18px;font-size:13.5px}
+  @media print{header.top,nav.tabs,.fab,.filters .btn,.no-print{display:none!important}body{background:#fff}.app{padding:0}}
+</style>
+</head>
+<body>
+
+<!-- ===================== AUTH SCREEN ===================== -->
+<div id="auth">
+  <div class="auth-card">
+    <div class="logo">S</div>
+    <h2 class="serif" id="authTitle">Welcome back</h2>
+    <p class="sub" id="authSub">Sign in to your team's stock</p>
+    <div class="err" id="authErr"></div>
+    <div id="authForm">
+      <div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div>
+      <div class="field"><label>Password</label><input id="authPass" type="password" autocomplete="current-password"></div>
+      <button class="btn primary" style="width:100%" id="authBtn" onclick="doAuth()">Sign in</button>
+      <div class="auth-toggle" id="authToggle">New here? <a onclick="toggleAuth()">Create an account</a></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== FIRST-RUN: CREATE TEAM ===================== -->
+<div class="overlay" id="orgOverlay">
+  <div class="modal">
+    <h3 class="serif">Create your business</h3>
+    <p class="section-sub">You'll be the owner. You can invite your team afterwards.</p>
+    <div class="field"><label>Business name</label><input id="orgName" placeholder="e.g. Kigali Supplies Ltd"></div>
+    <div class="field"><label>Currency code</label><input id="orgCur" value="RWF"></div>
+    <button class="btn primary" style="width:100%" onclick="createOrg()">Create</button>
+  </div>
+</div>
+
+<!-- ===================== MAIN APP ===================== -->
+<div class="app" id="app">
+  <header class="top">
+    <div class="brand"><div class="logo">S</div><h1 id="bizName">StockTrack</h1></div>
+    <div class="right">
+      <div class="sync"><span class="dot" id="netdot"></span><span id="netlabel">Online</span></div>
+    </div>
+  </header>
+  <nav class="tabs" id="tabs">
+    <button data-view="dashboard" class="active">Dashboard</button>
+    <button data-view="products">Products</button>
+    <button data-view="movements">Movements</button>
+    <button data-view="reports">Reports</button>
+    <button data-view="settings">Settings</button>
+  </nav>
+  <main>
+    <section class="view active" id="dashboard">
+      <div class="section-title serif">Overview</div>
+      <div class="section-sub" id="dashWho"></div>
+      <div class="cards" id="dashCards"></div>
+      <div class="report-head"><h3 class="serif">Low stock</h3></div>
+      <div class="table-wrap" id="lowStock"></div>
+    </section>
+
+    <section class="view" id="products">
+      <div class="row"><div><div class="section-title serif">Products</div><div class="section-sub">Catalogue and stock on hand</div></div>
+        <button class="btn primary" id="addProdBtn" onclick="openProduct()">+ Add product</button></div>
+      <div class="filters">
+        <div class="field search"><label>Search</label><input id="prodSearch" placeholder="Name or SKU…" oninput="renderProducts()"></div>
+        <div class="field"><label>Category</label><select id="prodCat" onchange="renderProducts()"></select></div>
+      </div>
+      <div class="table-wrap" id="prodTable"></div>
+    </section>
+
+    <section class="view" id="movements">
+      <div class="row"><div><div class="section-title serif">Movements</div><div class="section-sub">Purchases, sales and adjustments</div></div>
+        <button class="btn primary" onclick="openMovement()">+ Record movement</button></div>
+      <div class="filters">
+        <div class="field"><label>Type</label><select id="movType" onchange="renderMovements()">
+          <option value="">All</option><option value="in">Stock in</option><option value="out">Stock out</option><option value="adjustment">Adjustment</option></select></div>
+        <div class="field"><label>From</label><input type="date" id="movFrom" onchange="renderMovements()"></div>
+        <div class="field"><label>To</label><input type="date" id="movTo" onchange="renderMovements()"></div>
+      </div>
+      <div class="table-wrap" id="movTable"></div>
+    </section>
+
+    <section class="view" id="reports">
+      <div class="section-title serif">Financial report</div>
+      <div class="section-sub">Choose any period to generate a statement</div>
+      <div class="filters no-print">
+        <div class="field"><label>From</label><input type="date" id="repFrom"></div>
+        <div class="field"><label>To</label><input type="date" id="repTo"></div>
+        <div class="field"><label>&nbsp;</label><button class="btn primary" onclick="runReport()">Generate</button></div>
+        <div class="field"><label>&nbsp;</label><button class="btn ghost" onclick="window.print()">Print / PDF</button></div>
+        <div class="field"><label>&nbsp;</label><button class="btn ghost" onclick="exportReportCSV()">Export CSV</button></div>
+      </div>
+      <div id="reportBody"></div>
+    </section>
+
+    <section class="view" id="settings">
+      <div class="section-title serif">Settings</div>
+      <div class="section-sub">Business profile and team</div>
+      <div id="setupBanner"></div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="field"><label>Business name</label><input id="setBiz" disabled></div>
+        <div class="grid2">
+          <div class="field"><label>Currency code</label><input id="setCur" disabled></div>
+          <div class="field"><label>Costing method</label><select id="setCost" disabled>
+            <option value="standard">Standard (product cost price)</option>
+            <option value="average">Weighted average (from purchases)</option>
+          </select></div>
+        </div>
+        <button class="btn primary small" id="saveOrgBtn" onclick="saveOrg()" style="display:none">Save business settings</button>
+      </div>
+
+      <div class="card" id="teamCard" style="margin-bottom:16px;display:none">
+        <div class="row" style="margin-bottom:6px"><strong>Team members</strong>
+          <button class="btn ghost small" onclick="openInvite()">+ Invite member</button></div>
+        <div class="section-sub">Owners manage roles. A person must sign up first before you can invite them.</div>
+        <div id="teamList"></div>
+      </div>
+
+      <div class="card">
+        <div class="row" style="margin-bottom:10px"><strong>Account</strong></div>
+        <div class="section-sub" id="acctInfo"></div>
+        <button class="btn ghost small" onclick="signOut()">Sign out</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<button class="fab" id="fab" onclick="quickAdd()">+</button>
+<div class="toast" id="toast"></div>
+
+<!-- Product modal -->
+<div class="overlay" id="prodOverlay">
+  <div class="modal">
+    <h3 class="serif" id="prodTitle">Add product</h3>
+    <input type="hidden" id="pId">
+    <div class="grid2">
+      <div class="field"><label>SKU / code</label><input id="pSku" placeholder="BEV-001"></div>
+      <div class="field"><label>Category</label><input id="pCategory" placeholder="Beverages"></div>
+    </div>
+    <div class="field"><label>Product name</label><input id="pName" placeholder="Coffee 250g"></div>
+    <div class="grid2">
+      <div class="field"><label>Unit</label><input id="pUnit" value="pcs"></div>
+      <div class="field"><label>Opening quantity</label><input id="pOpening" type="number" step="any" value="0"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Cost price</label><input id="pCost" type="number" step="any" value="0"></div>
+      <div class="field"><label>Sale price</label><input id="pSale" type="number" step="any" value="0"></div>
+    </div>
+    <div class="field"><label>Reorder level</label><input id="pReorder" type="number" step="any" value="0"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal('prodOverlay')">Cancel</button>
+      <button class="btn primary" onclick="saveProduct()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Movement modal -->
+<div class="overlay" id="movOverlay">
+  <div class="modal">
+    <h3 class="serif">Record movement</h3>
+    <div class="field"><label>Product</label><select id="mProduct"></select></div>
+    <div class="grid2">
+      <div class="field"><label>Type</label><select id="mType" onchange="onMovTypeChange()">
+        <option value="in">Stock in (purchase)</option>
+        <option value="out">Stock out (sale)</option>
+        <option value="adjustment">Adjustment</option></select></div>
+      <div class="field"><label>Date</label><input type="date" id="mDate"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label id="mQtyLabel">Quantity</label><input id="mQty" type="number" step="any"></div>
+      <div class="field"><label id="mPriceLabel">Unit price</label><input id="mPrice" type="number" step="any"></div>
+    </div>
+    <div class="field"><label>Reference (invoice / note)</label><input id="mRef"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal('movOverlay')">Cancel</button>
+      <button class="btn primary" onclick="saveMovement()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Invite modal -->
+<div class="overlay" id="inviteOverlay">
+  <div class="modal">
+    <h3 class="serif">Invite a team member</h3>
+    <p class="section-sub">They must have already signed up with this email.</p>
+    <div class="field"><label>Email</label><input id="invEmail" type="email"></div>
+    <div class="field"><label>Role</label><select id="invRole">
+      <option value="staff">Staff — record movements & view reports</option>
+      <option value="manager">Manager — also edit products, prices, delete</option>
+      <option value="owner">Owner — full control incl. team</option>
+    </select></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal('inviteOverlay')">Cancel</button>
+      <button class="btn primary" onclick="sendInvite()">Add member</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* ============================================================
+   CONFIG — paste your two values from Supabase here
+   (Project Settings → API). The anon key is safe in client code;
+   your role rules in the database are what protect the data.
+   ============================================================ */
+const SUPABASE_URL  = 'https://nyexvxlcsbrvbqxjrlil.supabase.co';
+const SUPABASE_ANON = 'sb_publishable_0BekR2X8QTPzs46kZK8qCw_fSbkjKwq';
+
+const CONFIGURED = !SUPABASE_URL.includes('PASTE_');
+const sb = CONFIGURED ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON) : null;
+
+/* ---------- Local cache (IndexedDB) for offline-first ---------- */
+const DB_NAME='stocktrack', DB_VER=2;
+let db;
+function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open(DB_NAME,DB_VER);
+  r.onupgradeneeded=e=>{const d=e.target.result;
+    ['products','movements','suppliers','customers'].forEach(s=>{if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:'id'});});
+    if(!d.objectStoreNames.contains('meta'))d.createObjectStore('meta',{keyPath:'k'});
+    if(!d.objectStoreNames.contains('outbox'))d.createObjectStore('outbox',{keyPath:'key'});};
+  r.onsuccess=e=>{db=e.target.result;res()};r.onerror=e=>rej(e);});}
+function store(s,m){return db.transaction(s,m).objectStore(s);}
+function getAll(s){return new Promise(res=>{const o=[];const c=store(s,'readonly').openCursor();
+  c.onsuccess=e=>{const cur=e.target.result;if(cur){o.push(cur.value);cur.continue();}else res(o);};});}
+function getOne(s,id){return new Promise(res=>{const r=store(s,'readonly').get(id);r.onsuccess=()=>res(r.result);});}
+function put(s,v){return new Promise(res=>{store(s,'readwrite').put(v).onsuccess=()=>res();});}
+function del(s,id){return new Promise(res=>{store(s,'readwrite').delete(id).onsuccess=()=>res();});}
+function clearStore(s){return new Promise(res=>{store(s,'readwrite').clear().onsuccess=()=>res();});}
+function getMeta(k){return new Promise(res=>{const r=store('meta','readonly').get(k);r.onsuccess=()=>res(r.result?r.result.v:null);});}
+function setMeta(k,v){return put('meta',{k,v});}
+
+/* ---------- State ---------- */
+let session=null, orgId=null, role='staff', org={name:'StockTrack',currency:'RWF',costing:'standard'};
+let products=[], movements=[];
+let signupMode=false, syncing=false;
+
+const TABLES=['suppliers','customers','products','movements'];
+const can = {
+  editProducts: ()=>['owner','manager'].includes(role),
+  delete:       ()=>['owner','manager'].includes(role),
+  manageTeam:   ()=>role==='owner',
+  changeOrg:    ()=>role==='owner',
+};
+function fmt(n){n=Number(n)||0;return org.currency+' '+n.toLocaleString(undefined,{maximumFractionDigits:0});}
+function num(n){return (Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:2});}
+function today(){return new Date().toISOString().slice(0,10);}
+function nowISO(){return new Date().toISOString();}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600);}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+
+/* ============================================================
+   AUTH
+   ============================================================ */
+function toggleAuth(){signupMode=!signupMode;
+  authTitle.textContent=signupMode?'Create account':'Welcome back';
+  authSub.textContent=signupMode?'Set up your login':"Sign in to your team's stock";
+  authBtn.textContent=signupMode?'Create account':'Sign in';
+  authToggle.innerHTML=signupMode?'Already have an account? <a onclick="toggleAuth()">Sign in</a>':'New here? <a onclick="toggleAuth()">Create an account</a>';}
+function showErr(m){const e=document.getElementById('authErr');e.textContent=m;e.style.display=m?'block':'none';}
+async function doAuth(){
+  if(!CONFIGURED){showErr('App not configured yet — paste your Supabase URL and anon key in the CONFIG block at the top of index.html.');return;}
+  const email=authEmail.value.trim(), pass=authPass.value;
+  if(!email||!pass){showErr('Enter email and password');return;}
+  showErr('');
+  const fn = signupMode ? sb.auth.signUp({email,password:pass}) : sb.auth.signInWithPassword({email,password:pass});
+  const {data,error}=await fn;
+  if(error){showErr(error.message);return;}
+  if(signupMode && !data.session){showErr('Account created. Check your email to confirm, then sign in.');toggleAuth();return;}
+  await onSignedIn();
+}
+async function signOut(){await sb.auth.signOut();location.reload();}
+
+async function onSignedIn(){
+  const {data}=await sb.auth.getSession();
+  session=data.session; if(!session)return;
+  // find which org this user belongs to
+  const {data:mems,error}=await sb.from('memberships').select('org_id, role').limit(1);
+  if(error){ // offline? fall back to cached org
+    const cachedOrg=await getMeta('orgId'); const cachedRole=await getMeta('role');
+    if(cachedOrg){orgId=cachedOrg;role=cachedRole||'staff';await loadOrgRow(true);return enterApp();}
+    showErr('Could not reach server. Connect once to finish setup.');return;
+  }
+  if(!mems.length){ document.getElementById('orgOverlay').classList.add('open'); return; }
+  orgId=mems[0].org_id; role=mems[0].role;
+  await setMeta('orgId',orgId); await setMeta('role',role);
+  await loadOrgRow();
+  enterApp();
+}
+async function loadOrgRow(fromCache){
+  if(fromCache){const c=await getMeta('org');if(c)org=c;return;}
+  const {data}=await sb.from('organizations').select('*').eq('id',orgId).single();
+  if(data){org={name:data.name,currency:data.currency,costing:data.costing};await setMeta('org',org);}
+}
+async function createOrg(){
+  const name=orgName.value.trim()||'My Business';
+  const {data,error}=await sb.rpc('create_org',{org_name:name,cur:(orgCur.value||'RWF').toUpperCase()});
+  if(error){toast(error.message);return;}
+  orgId=data; role='owner';
+  await setMeta('orgId',orgId);await setMeta('role',role);
+  org={name,currency:(orgCur.value||'RWF').toUpperCase(),costing:'standard'};await setMeta('org',org);
+  closeModal('orgOverlay'); enterApp();
+}
+
+/* ============================================================
+   SYNC ENGINE (offline-first: render from local, sync in background)
+   ============================================================ */
+function setNet(){const on=navigator.onLine;const d=document.getElementById('netdot');const l=document.getElementById('netlabel');
+  if(syncing){d.className='dot syncing';l.textContent='Syncing…';return;}
+  d.className='dot'+(on?'':' off');l.textContent=on?'Synced':'Offline — saved locally';}
+
+// queue a local row for push, stamping updated_at so latest-write-wins
+async function localWrite(table,row){
+  row.org_id=orgId; row.updated_at=nowISO();
+  await put(table,row);
+  await put('outbox',{key:table+':'+row.id,table,id:row.id});
+  scheduleSync();
+}
+async function flush(){
+  if(!CONFIGURED||!navigator.onLine||!orgId)return;
+  const items=await getAll('outbox');
+  for(const it of items){
+    const row=await getOne(it.table,it.id);
+    if(!row){await del('outbox',it.key);continue;}
+    const {error}=await sb.from(it.table).upsert(row);
+    if(!error){await del('outbox',it.key);}
+    else if(error.code==='42501'){ // rejected by role rules
+      await del('outbox',it.key); toast('A change was blocked by your permissions.');
+    } else {break;} // network/other: keep and retry later
+  }
+}
+async function pull(){
+  if(!CONFIGURED||!navigator.onLine||!orgId)return;
+  const last=await getMeta('lastSync')||'1970-01-01T00:00:00Z';
+  const pendingIds=new Set((await getAll('outbox')).map(o=>o.id));
+  let maxTs=last;
+  for(const t of TABLES){
+    const {data,error}=await sb.from(t).select('*').eq('org_id',orgId).gt('updated_at',last);
+    if(error)return;
+    for(const row of data){
+      if(pendingIds.has(row.id))continue;          // keep local unsynced edits
+      if(row.deleted){await del(t,row.id);} else {await put(t,row);}
+      if(row.updated_at>maxTs)maxTs=row.updated_at;
+    }
+  }
+  await setMeta('lastSync',maxTs);
+}
+let syncTimer=null;
+function scheduleSync(){clearTimeout(syncTimer);syncTimer=setTimeout(syncNow,400);}
+async function syncNow(){
+  if(!CONFIGURED||!navigator.onLine||!orgId||syncing)return;
+  syncing=true;setNet();
+  try{await flush();await pull();await loadLocal();renderAll();}catch(e){console.warn(e);}
+  syncing=false;setNet();
+}
+window.addEventListener('online',()=>{setNet();syncNow();});
+window.addEventListener('offline',setNet);
+setInterval(()=>{if(navigator.onLine)syncNow();},25000); // keep team in step
+
+/* ============================================================
+   INVENTORY MATH (snake_case to match the database)
+   ============================================================ */
+function qtyOnHand(pid,upto){
+  const p=products.find(x=>x.id===pid);if(!p)return 0;
+  let q=Number(p.opening_qty)||0;
+  movements.filter(m=>m.product_id===pid&&(!upto||m.date<=upto)).forEach(m=>{
+    if(m.type==='in')q+=Number(m.qty);else if(m.type==='out')q-=Number(m.qty);else q+=Number(m.qty);});
+  return q;
+}
+function unitCost(p){
+  if(org.costing==='average'){
+    const ins=movements.filter(m=>m.product_id===p.id&&m.type==='in');
+    const totQ=ins.reduce((s,m)=>s+Number(m.qty),0)+(Number(p.opening_qty)||0);
+    const totV=ins.reduce((s,m)=>s+Number(m.qty)*Number(m.unit_price||0),0)+(Number(p.opening_qty)||0)*(Number(p.cost_price)||0);
+    return totQ>0?totV/totQ:Number(p.cost_price)||0;
+  }
+  return Number(p.cost_price)||0;
+}
+function inventoryValue(upto){return products.reduce((s,p)=>s+qtyOnHand(p.id,upto)*unitCost(p),0);}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+function renderAll(){renderDashboard();renderProducts();renderMovements();renderTeamUI();}
+function applyRoleUI(){
+  document.getElementById('addProdBtn').style.display=can.editProducts()?'':'none';
+  document.getElementById('fab').style.display = (currentView()==='products'&&!can.editProducts())?'none':'grid';
+}
+function currentView(){return document.querySelector('nav.tabs button.active').dataset.view;}
+function quickAdd(){currentView()==='movements'?openMovement():(can.editProducts()?openProduct():openMovement());}
+
+document.getElementById('tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+  document.querySelectorAll('nav.tabs button').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');document.getElementById(b.dataset.view).classList.add('active');
+  applyRoleUI();
+  const v=b.dataset.view;
+  if(v==='dashboard')renderDashboard();if(v==='products')renderProducts();if(v==='movements')renderMovements();if(v==='settings')renderSettings();
+});
+
+function renderDashboard(){
+  dashWho.textContent=`${org.name} · you are ${role}`;
+  const invVal=inventoryValue();
+  const low=products.filter(p=>Number(p.reorder_level)>0&&qtyOnHand(p.id)<=Number(p.reorder_level));
+  const retail=products.reduce((s,p)=>s+qtyOnHand(p.id)*(Number(p.sale_price)||0),0);
+  dashCards.innerHTML=`
+    <div class="card"><div class="label">Inventory value (cost)</div><div class="value">${fmt(invVal)}</div><div class="sub">${products.length} products</div></div>
+    <div class="card"><div class="label">Retail value</div><div class="value">${fmt(retail)}</div><div class="sub">if all stock sold</div></div>
+    <div class="card"><div class="label">Potential margin</div><div class="value small ${retail-invVal>=0?'pos':'neg'}">${fmt(retail-invVal)}</div></div>
+    <div class="card"><div class="label">Low stock items</div><div class="value ${low.length?'neg':'pos'}">${low.length}</div></div>`;
+  lowStock.innerHTML=low.length?`<table><thead><tr><th>Product</th><th>SKU</th><th class="num">On hand</th><th class="num">Reorder at</th></tr></thead><tbody>
+    ${low.map(p=>`<tr><td>${esc(p.name)}</td><td class="muted">${esc(p.sku||'')}</td>
+      <td class="num"><span class="pill low">${num(qtyOnHand(p.id))} ${esc(p.unit||'')}</span></td>
+      <td class="num">${num(p.reorder_level)}</td></tr>`).join('')}</tbody></table>`
+    :'<div class="empty">All stock levels are healthy ✓</div>';
+}
+function categories(){return [...new Set(products.map(p=>p.category).filter(Boolean))].sort();}
+function renderProducts(){
+  const sel=prodCat,cur=sel.value;
+  sel.innerHTML='<option value="">All categories</option>'+categories().map(c=>`<option ${c===cur?'selected':''}>${esc(c)}</option>`).join('');
+  const q=(prodSearch.value||'').toLowerCase(),cat=sel.value;
+  let list=products.filter(p=>(!cat||p.category===cat)&&((p.name||'').toLowerCase().includes(q)||(p.sku||'').toLowerCase().includes(q)));
+  prodTable.innerHTML=list.length?`<table><thead><tr><th>Product</th><th>SKU</th><th class="num">On hand</th><th class="num">Cost</th><th class="num">Sale</th><th class="num">Value</th>${can.editProducts()?'<th></th>':''}</tr></thead><tbody>
+  ${list.map(p=>{const oh=qtyOnHand(p.id);const low=Number(p.reorder_level)>0&&oh<=Number(p.reorder_level);
+    return `<tr><td><strong>${esc(p.name)}</strong><div class="muted" style="font-size:12px">${esc(p.category||'')}</div></td>
+      <td class="muted">${esc(p.sku||'')}</td>
+      <td class="num ${low?'neg':''}">${num(oh)} ${esc(p.unit||'')}</td>
+      <td class="num">${num(p.cost_price)}</td><td class="num">${num(p.sale_price)}</td>
+      <td class="num">${fmt(oh*unitCost(p))}</td>
+      ${can.editProducts()?`<td class="num"><button class="btn ghost small" onclick="openProduct('${p.id}')">Edit</button></td>`:''}</tr>`;}).join('')}</tbody></table>`
+    :'<div class="empty">No products yet.</div>';
+}
+function openProduct(id){
+  if(!can.editProducts()){toast('Only owners and managers can edit products.');return;}
+  if(id){const p=products.find(x=>x.id===id);prodTitle.textContent='Edit product';
+    pId.value=p.id;pSku.value=p.sku||'';pCategory.value=p.category||'';pName.value=p.name||'';pUnit.value=p.unit||'';
+    pOpening.value=p.opening_qty||0;pCost.value=p.cost_price||0;pSale.value=p.sale_price||0;pReorder.value=p.reorder_level||0;
+  }else{prodTitle.textContent='Add product';['pId','pSku','pCategory','pName'].forEach(i=>document.getElementById(i).value='');
+    pUnit.value='pcs';pOpening.value=0;pCost.value=0;pSale.value=0;pReorder.value=0;}
+  document.getElementById('prodOverlay').classList.add('open');
+}
+async function saveProduct(){
+  if(!pName.value.trim()){toast('Product name is required');return;}
+  const id=pId.value||crypto.randomUUID();
+  const existing=pId.value?await getOne('products',id):null;
+  const p={...(existing||{}),id,sku:pSku.value.trim(),category:pCategory.value.trim(),name:pName.value.trim(),unit:pUnit.value.trim(),
+    opening_qty:+pOpening.value||0,cost_price:+pCost.value||0,sale_price:+pSale.value||0,reorder_level:+pReorder.value||0,deleted:false};
+  await localWrite('products',p);
+  products=await getAll('products');closeModal('prodOverlay');renderProducts();renderDashboard();
+}
+function onMovTypeChange(){const t=mType.value;
+  mPriceLabel.textContent=t==='out'?'Sale price (unit)':t==='in'?'Purchase cost (unit)':'Unit cost';
+  mQtyLabel.textContent=t==='adjustment'?'Quantity (+/-)':'Quantity';}
+function openMovement(){
+  const live=products.filter(p=>!p.deleted);
+  if(!live.length){toast('Add a product first.');return;}
+  mProduct.innerHTML=live.map(p=>`<option value="${p.id}">${esc(p.name)} ${p.sku?'('+esc(p.sku)+')':''}</option>`).join('');
+  mType.value='in';mDate.value=today();mQty.value='';mPrice.value='';mRef.value='';onMovTypeChange();
+  document.getElementById('movOverlay').classList.add('open');
+}
+async function saveMovement(){
+  const qty=+mQty.value;if(!qty){toast('Enter a quantity');return;}
+  const p=products.find(x=>x.id===mProduct.value);
+  let price=+mPrice.value;if(!price)price=mType.value==='out'?(p.sale_price||0):(p.cost_price||0);
+  const m={id:crypto.randomUUID(),product_id:mProduct.value,type:mType.value,
+    qty:mType.value==='adjustment'?qty:Math.abs(qty),unit_price:price,date:mDate.value||today(),
+    reference:mRef.value.trim(),paid:true,deleted:false};
+  await localWrite('movements',m);
+  movements=await getAll('movements');closeModal('movOverlay');renderMovements();renderDashboard();
+}
+function renderMovements(){
+  const t=movType.value,f=movFrom.value,to=movTo.value;
+  let list=movements.filter(m=>!m.deleted&&(!t||m.type===t)&&(!f||m.date>=f)&&(!to||m.date<=to)).sort((a,b)=>b.date.localeCompare(a.date)||(b.updated_at||'').localeCompare(a.updated_at||''));
+  movTable.innerHTML=list.length?`<table><thead><tr><th>Date</th><th>Product</th><th>Type</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Value</th><th>Ref</th>${can.delete()?'<th></th>':''}</tr></thead><tbody>
+  ${list.map(m=>{const p=products.find(x=>x.id===m.product_id)||{name:'(deleted)'};const cls=m.type==='in'?'in':m.type==='out'?'out':'adj';
+    return `<tr><td>${m.date}</td><td>${esc(p.name)}</td><td><span class="pill ${cls}">${m.type}</span></td>
+      <td class="num">${num(m.qty)}</td><td class="num">${num(m.unit_price)}</td><td class="num">${fmt(Math.abs(m.qty)*m.unit_price)}</td>
+      <td class="muted">${esc(m.reference||'')}</td>
+      ${can.delete()?`<td class="num"><button class="btn danger small" onclick="delMovement('${m.id}')">✕</button></td>`:''}</tr>`;}).join('')}</tbody></table>`
+    :'<div class="empty">No movements for this filter.</div>';
+}
+async function delMovement(id){
+  if(!can.delete()){toast('Only owners and managers can delete.');return;}
+  if(!confirm('Delete this movement?'))return;
+  const m=await getOne('movements',id);m.deleted=true;await localWrite('movements',m);
+  movements=await getAll('movements');renderMovements();renderDashboard();
+}
+
+/* ---------- Reports ---------- */
+function runReport(){
+  const f=repFrom.value||'1970-01-01',t=repTo.value||today();
+  const inP=m=>!m.deleted&&m.date>=f&&m.date<=t;
+  const sales=movements.filter(m=>m.type==='out'&&inP(m)),purch=movements.filter(m=>m.type==='in'&&inP(m));
+  const revenue=sales.reduce((s,m)=>s+m.qty*m.unit_price,0);
+  const cogs=sales.reduce((s,m)=>{const p=products.find(x=>x.id===m.product_id);return s+m.qty*(p?unitCost(p):0);},0);
+  const purchases=purch.reduce((s,m)=>s+m.qty*m.unit_price,0);
+  const gross=revenue-cogs,margin=revenue>0?gross/revenue*100:0;
+  const openVal=inventoryValue(prevDay(f)),closeVal=inventoryValue(t);
+  const rows=products.map(p=>{const sQ=sales.filter(m=>m.product_id===p.id).reduce((s,m)=>s+m.qty,0);
+    const sV=sales.filter(m=>m.product_id===p.id).reduce((s,m)=>s+m.qty*m.unit_price,0);
+    const pQ=purch.filter(m=>m.product_id===p.id).reduce((s,m)=>s+m.qty,0);
+    const c=sales.filter(m=>m.product_id===p.id).reduce((s,m)=>s+m.qty*unitCost(p),0);
+    return {name:p.name,sku:p.sku,sQ,sV,pQ,profit:sV-c,close:qtyOnHand(p.id,t)};}).filter(r=>r.sQ||r.pQ||r.close);
+  window._reportData={f,t,revenue,cogs,gross,margin,purchases,openVal,closeVal,rows};
+  reportBody.innerHTML=`
+    <div style="text-align:center;margin:8px 0 4px"><div class="serif" style="font-size:22px">${esc(org.name)}</div>
+      <div class="muted">Financial Report · ${f} to ${t}</div></div>
+    <div class="cards" style="margin-top:18px">
+      <div class="card"><div class="label">Sales revenue</div><div class="value">${fmt(revenue)}</div><div class="sub">${sales.length} sales</div></div>
+      <div class="card"><div class="label">COGS</div><div class="value small">${fmt(cogs)}</div></div>
+      <div class="card"><div class="label">Gross profit</div><div class="value ${gross>=0?'pos':'neg'}">${fmt(gross)}</div><div class="sub">${margin.toFixed(1)}% margin</div></div>
+      <div class="card"><div class="label">Purchases</div><div class="value small">${fmt(purchases)}</div><div class="sub">${purch.length} receipts</div></div>
+      <div class="card"><div class="label">Opening inventory</div><div class="value small">${fmt(openVal)}</div><div class="sub">at ${f}</div></div>
+      <div class="card"><div class="label">Closing inventory</div><div class="value small">${fmt(closeVal)}</div><div class="sub">at ${t}</div></div>
+    </div>
+    <div class="report-head"><h3 class="serif">Product breakdown</h3></div>
+    <div class="table-wrap">${rows.length?`<table><thead><tr><th>Product</th><th class="num">Sold</th><th class="num">Revenue</th><th class="num">Gross profit</th><th class="num">Purchased</th><th class="num">Closing qty</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr><td>${esc(r.name)}<div class="muted" style="font-size:12px">${esc(r.sku||'')}</div></td>
+        <td class="num">${num(r.sQ)}</td><td class="num">${fmt(r.sV)}</td><td class="num ${r.profit>=0?'pos':'neg'}">${fmt(r.profit)}</td>
+        <td class="num">${num(r.pQ)}</td><td class="num">${num(r.close)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr style="font-weight:700;background:#faf7f0"><td>Total</td><td></td><td class="num">${fmt(revenue)}</td><td class="num ${gross>=0?'pos':'neg'}">${fmt(gross)}</td><td></td><td></td></tr></tfoot></table>`
+      :'<div class="empty">No activity in this period.</div>'}</div>
+    <div class="note">Costing: <strong>${org.costing==='average'?'Weighted average':'Standard cost'}</strong>.</div>`;
+}
+function prevDay(d){const x=new Date(d);x.setDate(x.getDate()-1);return x.toISOString().slice(0,10);}
+function exportReportCSV(){const r=window._reportData;if(!r){toast('Generate a report first');return;}
+  let csv=`${org.name} - Financial Report,${r.f} to ${r.t}\n\nMetric,Amount (${org.currency})\n`;
+  csv+=`Sales revenue,${r.revenue}\nCOGS,${r.cogs}\nGross profit,${r.gross}\nMargin %,${r.margin.toFixed(1)}\nPurchases,${r.purchases}\nOpening inventory,${r.openVal}\nClosing inventory,${r.closeVal}\n\n`;
+  csv+=`Product,SKU,Sold qty,Revenue,Gross profit,Purchased qty,Closing qty\n`;
+  r.rows.forEach(x=>csv+=`"${x.name}","${x.sku||''}",${x.sQ},${x.sV},${x.profit},${x.pQ},${x.close}\n`);
+  const b=new Blob([csv],{type:'text/csv'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=`report_${r.f}_${r.t}.csv`;a.click();URL.revokeObjectURL(u);
+}
+
+/* ---------- Settings & team ---------- */
+function renderSettings(){
+  setBiz.value=org.name;setCur.value=org.currency;setCost.value=org.costing;
+  acctInfo.textContent=`${session?session.user.email:''} — role: ${role}`;
+  const owner=can.changeOrg();
+  setBiz.disabled=setCur.disabled=setCost.disabled=!owner;
+  saveOrgBtn.style.display=owner?'':'none';
+  teamCard.style.display=can.manageTeam()?'':'none';
+  setupBanner.innerHTML = CONFIGURED?'':'<div class="setup-banner">⚙️ Not connected yet. Paste your Supabase URL and anon key in the CONFIG block at the top of index.html, then reload.</div>';
+  renderTeamUI();
+}
+async function saveOrg(){
+  if(!can.changeOrg())return;
+  org={name:setBiz.value||'My Business',currency:(setCur.value||'RWF').toUpperCase(),costing:setCost.value};
+  await setMeta('org',org);
+  if(CONFIGURED&&navigator.onLine){await sb.from('organizations').update({name:org.name,currency:org.currency,costing:org.costing}).eq('id',orgId);}
+  document.getElementById('bizName').textContent=org.name;toast('Saved');renderAll();
+}
+async function renderTeamUI(){
+  if(!can.manageTeam()||!CONFIGURED){teamList.innerHTML='';return;}
+  if(!navigator.onLine){teamList.innerHTML='<div class="empty">Connect to manage the team.</div>';return;}
+  const {data,error}=await sb.from('memberships').select('user_id, role').eq('org_id',orgId);
+  if(error){teamList.innerHTML='';return;}
+  teamList.innerHTML=`<table><tbody>${data.map(m=>`<tr>
+    <td>${m.user_id===session.user.id?'You':'<span class="muted">'+m.user_id.slice(0,8)+'…</span>'}</td>
+    <td><span class="pill role">${m.role}</span></td>
+    <td class="num">${m.user_id===session.user.id?'':`<select class="btn ghost small" onchange="changeRole('${m.user_id}',this.value)">
+      ${['staff','manager','owner'].map(r=>`<option ${r===m.role?'selected':''}>${r}</option>`).join('')}</select>`}</td></tr>`).join('')}</tbody></table>`;
+}
+function openInvite(){if(!can.manageTeam())return;invEmail.value='';invRole.value='staff';document.getElementById('inviteOverlay').classList.add('open');}
+async function sendInvite(){
+  const {error}=await sb.rpc('add_member',{target_org:orgId,member_email:invEmail.value.trim(),member_role:invRole.value});
+  if(error){toast(error.message);return;}
+  closeModal('inviteOverlay');toast('Member added');renderTeamUI();
+}
+async function changeRole(uid,newRole){
+  const {error}=await sb.from('memberships').update({role:newRole}).eq('org_id',orgId).eq('user_id',uid);
+  toast(error?error.message:'Role updated');
+}
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+async function loadLocal(){products=await getAll('products');movements=await getAll('movements');}
+function enterApp(){
+  document.getElementById('auth').style.display='none';
+  document.getElementById('app').style.display='block';
+  document.getElementById('bizName').textContent=org.name;
+  repFrom.value=new Date(Date.now()-30*864e5).toISOString().slice(0,10);repTo.value=today();
+  setNet();applyRoleUI();
+  loadLocal().then(()=>{renderAll();syncNow();});
+}
+(async function init(){
+  await openDB();
+  if(!CONFIGURED){ // let them explore the auth screen but show guidance
+    showErr('Setup needed: paste your Supabase URL and anon key in index.html (CONFIG block at top).');
+    return;
+  }
+  const {data}=await sb.auth.getSession();
+  if(data.session){session=data.session;await onSignedIn();}
+})();
+</script>
+</body>
+</html>
