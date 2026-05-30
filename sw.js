@@ -1,5 +1,5 @@
 // StockTrack service worker — caches the app shell for full offline use
-const CACHE = 'stocktrack-v3';
+const CACHE = 'stocktrack-v5';
 const ASSETS = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', e => {

@@ -167,7 +167,8 @@
 
     <section class="view" id="movements">
       <div class="row"><div><div class="section-title serif">Movements</div><div class="section-sub">Purchases, sales and adjustments</div></div>
-        <button class="btn primary" onclick="openMovement()">+ Record movement</button></div>
+        <div style="display:flex;gap:8px"><button class="btn ghost" onclick="scanToSell()">⌖ Scan to sell</button>
+        <button class="btn primary" onclick="openMovement()">+ Record movement</button></div></div>
       <div class="filters">
         <div class="field"><label>Type</label><select id="movType" onchange="renderMovements()">
           <option value="">All</option><option value="in">Stock in</option><option value="out">Stock out</option><option value="adjustment">Adjustment</option></select></div>
@@ -192,6 +193,11 @@
       <div class="section-title serif">Financial report</div>
       <div class="section-sub">Choose any period to generate a statement</div>
       <div class="filters no-print">
+        <div class="field"><label>Report</label><select id="repType" onchange="runReport()">
+          <option value="pnl">Profit &amp; Loss</option>
+          <option value="cash">Cash flow</option>
+          <option value="valuation">Inventory valuation</option>
+          <option value="aging">Stock aging</option></select></div>
         <div class="field"><label>From</label><input type="date" id="repFrom"></div>
         <div class="field"><label>To</label><input type="date" id="repTo"></div>
         <div class="field"><label>&nbsp;</label><button class="btn primary" onclick="runReport()">Generate</button></div>
@@ -255,6 +261,9 @@
       <div class="field"><label>Sale price</label><input id="pSale" type="number" step="any" value="0"></div>
     </div>
     <div class="field"><label>Reorder level</label><input id="pReorder" type="number" step="any" value="0"></div>
+    <div class="field"><label>Barcode</label>
+      <div style="display:flex;gap:8px"><input id="pBarcode" style="flex:1" placeholder="scan or type">
+      <button type="button" class="btn ghost" onclick="scanForProduct()">Scan</button></div></div>
     <div class="field"><label>Default supplier (optional)</label><select id="pSupplier"></select></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal('prodOverlay')">Cancel</button>
@@ -328,6 +337,17 @@
   </div>
 </div>
 
+<!-- Scanner modal -->
+<div class="overlay" id="scanOverlay">
+  <div class="modal">
+    <h3 class="serif">Scan barcode</h3>
+    <div id="reader" style="width:100%;border-radius:12px;overflow:hidden"></div>
+    <p class="section-sub" id="scanHint" style="margin-top:10px">Point the rear camera at a barcode. Allow camera access if prompted.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeScanner()">Cancel</button></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ============================================================
@@ -582,8 +602,8 @@ function openProduct(id){
   if(id){const p=products.find(x=>x.id===id);prodTitle.textContent='Edit product';
     pId.value=p.id;pSku.value=p.sku||'';pCategory.value=p.category||'';pName.value=p.name||'';pUnit.value=p.unit||'';
     pOpening.value=p.opening_qty||0;pCost.value=p.cost_price||0;pSale.value=p.sale_price||0;pReorder.value=p.reorder_level||0;
-    pSupplier.value=p.supplier_id||'';
-  }else{prodTitle.textContent='Add product';['pId','pSku','pCategory','pName'].forEach(i=>document.getElementById(i).value='');
+    pSupplier.value=p.supplier_id||'';pBarcode.value=p.barcode||'';
+  }else{prodTitle.textContent='Add product';['pId','pSku','pCategory','pName','pBarcode'].forEach(i=>document.getElementById(i).value='');
     pUnit.value='pcs';pOpening.value=0;pCost.value=0;pSale.value=0;pReorder.value=0;pSupplier.value='';}
   document.getElementById('prodOverlay').classList.add('open');
 }
@@ -593,7 +613,7 @@ async function saveProduct(){
   const existing=pId.value?await getOne('products',id):null;
   const p={...(existing||{}),id,sku:pSku.value.trim(),category:pCategory.value.trim(),name:pName.value.trim(),unit:pUnit.value.trim(),
     opening_qty:+pOpening.value||0,cost_price:+pCost.value||0,sale_price:+pSale.value||0,reorder_level:+pReorder.value||0,
-    supplier_id:pSupplier.value||null,deleted:false};
+    barcode:pBarcode.value.trim()||null,supplier_id:pSupplier.value||null,deleted:false};
   await localWrite('products',p);
   products=await getAll('products');closeModal('prodOverlay');renderProducts();renderDashboard();
 }
@@ -643,7 +663,7 @@ function renderMovements(){
     return `<tr><td>${m.date}</td><td>${esc(p.name)}</td><td><span class="pill ${cls}">${m.type}</span></td>
       <td class="muted">${esc(partyName(m))}</td>
       <td class="num">${num(m.qty)}</td><td class="num">${num(m.unit_price)}</td><td class="num">${fmt(Math.abs(m.qty)*m.unit_price)}</td>
-      <td>${m.type==='adjustment'?'':(credit?'<span class="pill out">credit</span>':'<span class="pill in">paid</span>')}</td>
+      <td>${m.type==='adjustment'?'':(credit?`<span class="pill out">credit</span>${can.delete()?` <a style="cursor:pointer;color:var(--green);font-weight:600;font-size:12px" onclick="setPaid('${m.id}')">mark paid</a>`:''}`:'<span class="pill in">paid</span>')}</td>
       <td class="muted">${esc(m.reference||'')}</td>
       ${can.delete()?`<td class="num"><button class="btn danger small" onclick="delMovement('${m.id}')">✕</button></td>`:''}</tr>`;}).join('')}</tbody></table>`
     :'<div class="empty">No movements for this filter.</div>';
@@ -653,6 +673,54 @@ async function delMovement(id){
   if(!confirm('Delete this movement?'))return;
   const m=await getOne('movements',id);m.deleted=true;await localWrite('movements',m);
   movements=await getAll('movements');renderMovements();renderDashboard();
+}
+async function setPaid(id){
+  if(!can.delete()){toast('Only owners and managers can change payment status.');return;}
+  const m=await getOne('movements',id);if(!m)return;m.paid=true;await localWrite('movements',m);
+  movements=await getAll('movements');renderMovements();renderDashboard();toast('Marked as paid');
+}
+
+/* ---------- Barcode scanning ---------- */
+let _scanner=null,_scanCb=null,_scanRunning=false;
+function scannerFormats(){
+  if(typeof Html5QrcodeSupportedFormats==='undefined')return undefined;
+  const F=Html5QrcodeSupportedFormats;
+  return [F.EAN_13,F.EAN_8,F.UPC_A,F.UPC_E,F.CODE_128,F.CODE_39,F.ITF,F.QR_CODE];
+}
+async function openScanner(cb){
+  if(typeof Html5Qrcode==='undefined'){toast('Scanner not loaded yet — connect once, then retry.');return;}
+  _scanCb=cb;
+  document.getElementById('scanOverlay').classList.add('open');
+  if(!_scanner)_scanner=new Html5Qrcode('reader',{formatsToSupport:scannerFormats(),
+    experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
+  try{
+    await _scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:280,height:170}},onScan,()=>{});
+    _scanRunning=true;
+  }catch(e){toast('Cannot open camera. Check permissions.');closeScanner();}
+}
+function onScan(text){
+  if(!_scanRunning)return;
+  const cb=_scanCb;
+  closeScanner();
+  if(cb)cb(String(text).trim());
+}
+async function closeScanner(){
+  document.getElementById('scanOverlay').classList.remove('open');
+  if(_scanner&&_scanRunning){try{await _scanner.stop();}catch(e){}_scanRunning=false;}
+  _scanCb=null;
+}
+function scanForProduct(){
+  openScanner(code=>{pBarcode.value=code;toast('Barcode captured');});
+}
+function scanToSell(){
+  openScanner(code=>{
+    const p=products.find(x=>!x.deleted&&(x.barcode||'').trim()===code);
+    if(!p){toast('No product matches barcode '+code);return;}
+    openMovement();
+    mProduct.value=p.id;mType.value='out';onMovTypeChange();
+    mQty.value=1;mPrice.value=p.sale_price||0;
+    toast('Loaded: '+p.name);
+  });
 }
 
 /* ---------- Contacts (suppliers & customers) ---------- */
@@ -706,8 +774,27 @@ async function saveContact(){
   if(kind==='customers')customers=await getAll('customers');else suppliers=await getAll('suppliers');
   closeModal('contactOverlay');renderContacts();
 }
+/* ============================================================
+   REPORTS
+   ============================================================ */
+function csvEsc(s){return '"'+String(s==null?'':s).replace(/"/g,'""')+'"';}
+function reportTitle(name,sub){return `<div style="text-align:center;margin:8px 0 4px"><div class="serif" style="font-size:22px">${esc(org.name)}</div><div class="muted">${esc(name)} · ${esc(sub)}</div></div>`;}
+function daysBetween(d,upto){return Math.max(0,Math.floor((new Date(upto)-new Date(d))/86400000));}
+function monthList(f,t){const out=[];let d=new Date(f.slice(0,7)+'-01T00:00:00');const end=new Date(t.slice(0,7)+'-01T00:00:00');
+  while(d<=end){out.push(d.toISOString().slice(0,7));d.setMonth(d.getMonth()+1);}return out;}
+
 function runReport(){
+  const type=document.getElementById('repType').value;
   const f=repFrom.value||'1970-01-01',t=repTo.value||today();
+  if(type==='pnl')renderPnL(f,t);
+  else if(type==='cash')renderCashFlow(f,t);
+  else if(type==='valuation')renderValuation(t);
+  else if(type==='aging')renderAging(t);
+}
+function prevDay(d){const x=new Date(d);x.setDate(x.getDate()-1);return x.toISOString().slice(0,10);}
+
+/* ---------- Profit & Loss ---------- */
+function renderPnL(f,t){
   const inP=m=>!m.deleted&&m.date>=f&&m.date<=t;
   const sales=movements.filter(m=>m.type==='out'&&inP(m)),purch=movements.filter(m=>m.type==='in'&&inP(m));
   const revenue=sales.reduce((s,m)=>s+m.qty*m.unit_price,0);
@@ -720,10 +807,7 @@ function runReport(){
     const pQ=purch.filter(m=>m.product_id===p.id).reduce((s,m)=>s+m.qty,0);
     const c=sales.filter(m=>m.product_id===p.id).reduce((s,m)=>s+m.qty*unitCost(p),0);
     return {name:p.name,sku:p.sku,sQ,sV,pQ,profit:sV-c,close:qtyOnHand(p.id,t)};}).filter(r=>r.sQ||r.pQ||r.close);
-  window._reportData={f,t,revenue,cogs,gross,margin,purchases,openVal,closeVal,rows};
-  reportBody.innerHTML=`
-    <div style="text-align:center;margin:8px 0 4px"><div class="serif" style="font-size:22px">${esc(org.name)}</div>
-      <div class="muted">Financial Report · ${f} to ${t}</div></div>
+  reportBody.innerHTML=reportTitle('Profit & Loss',`${f} to ${t}`)+`
     <div class="cards" style="margin-top:18px">
       <div class="card"><div class="label">Sales revenue</div><div class="value">${fmt(revenue)}</div><div class="sub">${sales.length} sales</div></div>
       <div class="card"><div class="label">COGS</div><div class="value small">${fmt(cogs)}</div></div>
@@ -740,14 +824,118 @@ function runReport(){
       <tfoot><tr style="font-weight:700;background:#faf7f0"><td>Total</td><td></td><td class="num">${fmt(revenue)}</td><td class="num ${gross>=0?'pos':'neg'}">${fmt(gross)}</td><td></td><td></td></tr></tfoot></table>`
       :'<div class="empty">No activity in this period.</div>'}</div>
     <div class="note">Costing: <strong>${org.costing==='average'?'Weighted average':'Standard cost'}</strong>.</div>`;
-}
-function prevDay(d){const x=new Date(d);x.setDate(x.getDate()-1);return x.toISOString().slice(0,10);}
-function exportReportCSV(){const r=window._reportData;if(!r){toast('Generate a report first');return;}
-  let csv=`${org.name} - Financial Report,${r.f} to ${r.t}\n\nMetric,Amount (${org.currency})\n`;
-  csv+=`Sales revenue,${r.revenue}\nCOGS,${r.cogs}\nGross profit,${r.gross}\nMargin %,${r.margin.toFixed(1)}\nPurchases,${r.purchases}\nOpening inventory,${r.openVal}\nClosing inventory,${r.closeVal}\n\n`;
+  let csv=`${org.name} - Profit & Loss,${f} to ${t}\n\nMetric,Amount (${org.currency})\n`;
+  csv+=`Sales revenue,${revenue}\nCOGS,${cogs}\nGross profit,${gross}\nMargin %,${margin.toFixed(1)}\nPurchases,${purchases}\nOpening inventory,${openVal}\nClosing inventory,${closeVal}\n\n`;
   csv+=`Product,SKU,Sold qty,Revenue,Gross profit,Purchased qty,Closing qty\n`;
-  r.rows.forEach(x=>csv+=`"${x.name}","${x.sku||''}",${x.sQ},${x.sV},${x.profit},${x.pQ},${x.close}\n`);
-  const b=new Blob([csv],{type:'text/csv'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=`report_${r.f}_${r.t}.csv`;a.click();URL.revokeObjectURL(u);
+  rows.forEach(x=>csv+=`${csvEsc(x.name)},${csvEsc(x.sku)},${x.sQ},${x.sV},${x.profit},${x.pQ},${x.close}\n`);
+  setReport(`pnl_${f}_${t}`,csv);
+}
+
+/* ---------- Cash flow ---------- */
+function renderCashFlow(f,t){
+  const inP=m=>!m.deleted&&m.date>=f&&m.date<=t;
+  const val=m=>Math.abs(m.qty)*m.unit_price;
+  const sales=movements.filter(m=>m.type==='out'&&inP(m)),purch=movements.filter(m=>m.type==='in'&&inP(m));
+  const inflow=sales.filter(m=>m.paid!==false).reduce((s,m)=>s+val(m),0);
+  const outflow=purch.filter(m=>m.paid!==false).reduce((s,m)=>s+val(m),0);
+  const creditSales=sales.filter(m=>m.paid===false).reduce((s,m)=>s+val(m),0);
+  const creditPurch=purch.filter(m=>m.paid===false).reduce((s,m)=>s+val(m),0);
+  const net=inflow-outflow;
+  const months=monthList(f,t).map(mo=>{
+    const ci=sales.filter(m=>m.paid!==false&&m.date.slice(0,7)===mo).reduce((s,m)=>s+val(m),0);
+    const co=purch.filter(m=>m.paid!==false&&m.date.slice(0,7)===mo).reduce((s,m)=>s+val(m),0);
+    return {mo,ci,co,net:ci-co};});
+  reportBody.innerHTML=reportTitle('Cash Flow',`${f} to ${t}`)+`
+    <div class="cards" style="margin-top:18px">
+      <div class="card"><div class="label">Cash inflow</div><div class="value pos">${fmt(inflow)}</div><div class="sub">paid sales</div></div>
+      <div class="card"><div class="label">Cash outflow</div><div class="value neg">${fmt(outflow)}</div><div class="sub">paid purchases</div></div>
+      <div class="card"><div class="label">Net cash flow</div><div class="value ${net>=0?'pos':'neg'}">${fmt(net)}</div></div>
+      <div class="card"><div class="label">Credit sales (not yet cash)</div><div class="value small warn">${fmt(creditSales)}</div></div>
+      <div class="card"><div class="label">Credit purchases (not yet cash)</div><div class="value small warn">${fmt(creditPurch)}</div></div>
+    </div>
+    <div class="report-head"><h3 class="serif">Monthly cash movement</h3></div>
+    <div class="table-wrap"><table><thead><tr><th>Month</th><th class="num">Cash in</th><th class="num">Cash out</th><th class="num">Net</th></tr></thead>
+      <tbody>${months.map(r=>`<tr><td>${r.mo}</td><td class="num pos">${fmt(r.ci)}</td><td class="num neg">${fmt(r.co)}</td><td class="num ${r.net>=0?'pos':'neg'}">${fmt(r.net)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr style="font-weight:700;background:#faf7f0"><td>Total</td><td class="num">${fmt(inflow)}</td><td class="num">${fmt(outflow)}</td><td class="num ${net>=0?'pos':'neg'}">${fmt(net)}</td></tr></tfoot></table></div>
+    <div class="note">Cash is counted on a transaction's date when it's marked <strong>Paid</strong>. Items still <strong>On credit</strong> are listed separately and become cash when you mark them paid (Movements tab). Note: there's no separate settlement-date field, so a credit item settled later is treated as paid on its original date.</div>`;
+  let csv=`${org.name} - Cash Flow,${f} to ${t}\n\nMetric,Amount (${org.currency})\n`;
+  csv+=`Cash inflow,${inflow}\nCash outflow,${outflow}\nNet cash flow,${net}\nCredit sales,${creditSales}\nCredit purchases,${creditPurch}\n\nMonth,Cash in,Cash out,Net\n`;
+  months.forEach(r=>csv+=`${r.mo},${r.ci},${r.co},${r.net}\n`);
+  setReport(`cashflow_${f}_${t}`,csv);
+}
+
+/* ---------- Inventory valuation (as at a date) ---------- */
+function renderValuation(t){
+  const rows=products.map(p=>{const q=qtyOnHand(p.id,t);const uc=unitCost(p);
+    return {name:p.name,sku:p.sku,cat:p.category,q,uc,cost:q*uc,retail:q*(Number(p.sale_price)||0)};})
+    .filter(r=>Math.abs(r.q)>1e-9).sort((a,b)=>(a.cat||'').localeCompare(b.cat||'')||(a.name||'').localeCompare(b.name||''));
+  const tCost=rows.reduce((s,r)=>s+r.cost,0),tRetail=rows.reduce((s,r)=>s+r.retail,0);
+  reportBody.innerHTML=reportTitle('Inventory Valuation',`as at ${t}`)+`
+    <div class="cards" style="margin-top:18px">
+      <div class="card"><div class="label">Total cost value</div><div class="value">${fmt(tCost)}</div><div class="sub">${rows.length} products in stock</div></div>
+      <div class="card"><div class="label">Total retail value</div><div class="value small">${fmt(tRetail)}</div></div>
+      <div class="card"><div class="label">Potential margin</div><div class="value small ${tRetail-tCost>=0?'pos':'neg'}">${fmt(tRetail-tCost)}</div></div>
+    </div>
+    <div class="table-wrap">${rows.length?`<table><thead><tr><th>Product</th><th>Category</th><th class="num">On hand</th><th class="num">Unit cost</th><th class="num">Cost value</th><th class="num">Retail value</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr><td>${esc(r.name)}<div class="muted" style="font-size:12px">${esc(r.sku||'')}</div></td><td class="muted">${esc(r.cat||'')}</td>
+        <td class="num">${num(r.q)}</td><td class="num">${num(r.uc)}</td><td class="num">${fmt(r.cost)}</td><td class="num">${fmt(r.retail)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr style="font-weight:700;background:#faf7f0"><td>Total</td><td></td><td></td><td></td><td class="num">${fmt(tCost)}</td><td class="num">${fmt(tRetail)}</td></tr></tfoot></table>`
+      :'<div class="empty">No stock on hand at this date.</div>'}</div>
+    <div class="note">Valued at <strong>${org.costing==='average'?'weighted-average':'standard'}</strong> cost. Uses the <strong>To</strong> date as the "as at" date.</div>`;
+  let csv=`${org.name} - Inventory Valuation,as at ${t}\n\nProduct,SKU,Category,On hand,Unit cost,Cost value,Retail value\n`;
+  rows.forEach(r=>csv+=`${csvEsc(r.name)},${csvEsc(r.sku)},${csvEsc(r.cat)},${r.q},${r.uc},${r.cost},${r.retail}\n`);
+  csv+=`Total,,,,,${tCost},${tRetail}\n`;
+  setReport(`valuation_${t}`,csv);
+}
+
+/* ---------- Stock aging (FIFO layers) ---------- */
+function consumeLayers(layers,q){for(const l of layers){if(q<=1e-9)break;const take=Math.min(l.qty,q);l.qty-=take;q-=take;}}
+function fifoLayers(p,upto){
+  const ms=movements.filter(m=>!m.deleted&&m.product_id===p.id&&m.date<=upto)
+    .sort((a,b)=>a.date.localeCompare(b.date)||(a.updated_at||'').localeCompare(b.updated_at||''));
+  const firstDate=ms.length?ms[0].date:upto;
+  const layers=[];
+  if(Number(p.opening_qty)>0)layers.push({qty:Number(p.opening_qty),cost:Number(p.cost_price)||0,date:firstDate});
+  for(const m of ms){
+    if(m.type==='in')layers.push({qty:Number(m.qty),cost:Number(m.unit_price)||0,date:m.date});
+    else if(m.type==='adjustment'){if(Number(m.qty)>0)layers.push({qty:Number(m.qty),cost:Number(p.cost_price)||0,date:m.date});else consumeLayers(layers,Math.abs(Number(m.qty)));}
+    else consumeLayers(layers,Math.abs(Number(m.qty)));
+  }
+  return layers.filter(l=>l.qty>1e-9);
+}
+function renderAging(t){
+  const B=['0–30','31–60','61–90','90+'];
+  const bidx=age=>age<=30?0:age<=60?1:age<=90?2:3;
+  const totals=[0,0,0,0];
+  const rows=products.map(p=>{const layers=fifoLayers(p,t);const buckets=[0,0,0,0];
+    layers.forEach(l=>{const v=l.qty*l.cost;buckets[bidx(daysBetween(l.date,t))]+=v;});
+    const tot=buckets.reduce((a,b)=>a+b,0);buckets.forEach((v,i)=>totals[i]+=v);
+    return {name:p.name,sku:p.sku,buckets,tot};}).filter(r=>r.tot>1e-9).sort((a,b)=>b.buckets[3]-a.buckets[3]);
+  const grand=totals.reduce((a,b)=>a+b,0);
+  const slow=grand>0?totals[3]/grand*100:0;
+  reportBody.innerHTML=reportTitle('Stock Aging',`as at ${t}`)+`
+    <div class="cards" style="margin-top:18px">
+      <div class="card"><div class="label">Total stock value</div><div class="value">${fmt(grand)}</div></div>
+      <div class="card"><div class="label">Aged over 90 days</div><div class="value small ${slow>20?'neg':'warn'}">${fmt(totals[3])}</div><div class="sub">${slow.toFixed(1)}% of stock</div></div>
+      <div class="card"><div class="label">Fresh (0–30 days)</div><div class="value small pos">${fmt(totals[0])}</div></div>
+    </div>
+    <div class="table-wrap">${rows.length?`<table><thead><tr><th>Product</th>${B.map(b=>`<th class="num">${b}</th>`).join('')}<th class="num">Total</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr><td>${esc(r.name)}<div class="muted" style="font-size:12px">${esc(r.sku||'')}</div></td>
+        ${r.buckets.map((v,i)=>`<td class="num ${i===3&&v>0?'neg':''}">${v>0?fmt(v):'—'}</td>`).join('')}<td class="num"><strong>${fmt(r.tot)}</strong></td></tr>`).join('')}</tbody>
+      <tfoot><tr style="font-weight:700;background:#faf7f0"><td>Total</td>${totals.map(v=>`<td class="num">${fmt(v)}</td>`).join('')}<td class="num">${fmt(grand)}</td></tr></tfoot></table>`
+      :'<div class="empty">No stock on hand at this date.</div>'}</div>
+    <div class="note">Ages computed by FIFO (oldest stock sold first), valued at purchase cost of each remaining layer. Opening stock is aged from a product's first recorded transaction. Days bucketed relative to the <strong>To</strong> date.</div>`;
+  let csv=`${org.name} - Stock Aging,as at ${t}\n\nProduct,SKU,${B.join(',')},Total\n`;
+  rows.forEach(r=>csv+=`${csvEsc(r.name)},${csvEsc(r.sku)},${r.buckets.join(',')},${r.tot}\n`);
+  csv+=`Total,,${totals.join(',')},${grand}\n`;
+  setReport(`aging_${t}`,csv);
+}
+
+function setReport(name,csv){window._reportCSV=csv;window._reportName=name;}
+function exportReportCSV(){
+  if(!window._reportCSV){toast('Generate a report first');return;}
+  const b=new Blob([window._reportCSV],{type:'text/csv'});const u=URL.createObjectURL(b);
+  const a=document.createElement('a');a.href=u;a.download=`${window._reportName}.csv`;a.click();URL.revokeObjectURL(u);
 }
 
 /* ---------- Settings & team ---------- */
