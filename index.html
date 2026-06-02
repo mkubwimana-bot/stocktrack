@@ -172,7 +172,7 @@
       <div class="row"><div><div class="section-title serif">Products</div><div class="section-sub">Catalogue and stock on hand</div></div>
         <button class="btn primary" id="addProdBtn" onclick="openProduct()">+ Add product</button></div>
       <div class="filters">
-        <div class="field search"><label>Search</label><input id="prodSearch" placeholder="Name or SKU…" oninput="renderProducts()"></div>
+        <div class="field search"><label>Search</label><input id="prodSearch" placeholder="Name or code…" oninput="renderProducts()"></div>
         <div class="field"><label>Category</label><select id="prodCat" onchange="renderProducts()"></select></div>
       </div>
       <div class="table-wrap" id="prodTable"></div>
@@ -261,7 +261,7 @@
     <h3 class="serif" id="prodTitle">Add product</h3>
     <input type="hidden" id="pId">
     <div class="grid2">
-      <div class="field"><label>SKU / code</label><input id="pSku" placeholder="BEV-001"></div>
+      <div class="field"><label>Code</label><input id="pSku" placeholder="BEV-001"></div>
       <div class="field"><label>Category</label><input id="pCategory" placeholder="Beverages"></div>
     </div>
     <div class="field"><label>Product name</label><input id="pName" placeholder="Coffee 250g"></div>
@@ -516,8 +516,10 @@ async function flush(){
     if(!row){await del('outbox',it.key);continue;}
     const {error}=await sb.from(it.table).upsert(row);
     if(!error){await del('outbox',it.key);}
-    else if(error.code==='42501'){ // rejected by role rules
-      await del('outbox',it.key); toast('A change was blocked by your permissions.');
+    else if(error.code==='42501'||error.code==='23505'){ // rejected by role rules or duplicate code
+      await del('outbox',it.key);
+      toast(error.code==='23505'?'A change was rejected: that code is already used.':'A change was blocked by your permissions.');
+      if(error.code==='23505'){await pull();await loadLocal();renderAll();}
     } else {break;} // network/other: keep and retry later
   }
 }
@@ -615,7 +617,7 @@ function renderDashboard(){
     <div class="card"><div class="label">Low stock items</div><div class="value ${low.length?'neg':'pos'}">${low.length}</div></div>
     <div class="card"><div class="label">Receivable (unpaid sales)</div><div class="value small ${receivable>0?'neg':'pos'}">${fmt(receivable)}</div></div>
     <div class="card"><div class="label">Payable (unpaid purchases)</div><div class="value small ${payable>0?'warn':'pos'}">${fmt(payable)}</div></div>`;
-  lowStock.innerHTML=low.length?`<table><thead><tr><th>Product</th><th>SKU</th><th class="num">On hand</th><th class="num">Reorder at</th></tr></thead><tbody>
+  lowStock.innerHTML=low.length?`<table><thead><tr><th>Product</th><th>Code</th><th class="num">On hand</th><th class="num">Reorder at</th></tr></thead><tbody>
     ${low.map(p=>`<tr><td>${esc(p.name)}</td><td class="muted">${esc(p.sku||'')}</td>
       <td class="num"><span class="pill low">${num(qtyOnHand(p.id))} ${esc(p.unit||'')}</span></td>
       <td class="num">${num(p.reorder_level)}</td></tr>`).join('')}</tbody></table>`
@@ -627,7 +629,7 @@ function renderProducts(){
   sel.innerHTML='<option value="">All categories</option>'+categories().map(c=>`<option ${c===cur?'selected':''}>${esc(c)}</option>`).join('');
   const q=(prodSearch.value||'').toLowerCase(),cat=sel.value;
   let list=products.filter(p=>(!cat||p.category===cat)&&((p.name||'').toLowerCase().includes(q)||(p.sku||'').toLowerCase().includes(q)));
-  prodTable.innerHTML=list.length?`<table><thead><tr><th>Product</th><th>SKU</th><th class="num">On hand</th><th class="num">Cost</th><th class="num">Sale</th><th class="num">Value</th>${can.editProducts()?'<th></th>':''}</tr></thead><tbody>
+  prodTable.innerHTML=list.length?`<table><thead><tr><th>Product</th><th>Code</th><th class="num">On hand</th><th class="num">Cost</th><th class="num">Sale</th><th class="num">Value</th>${can.editProducts()?'<th></th>':''}</tr></thead><tbody>
   ${list.map(p=>{const oh=qtyOnHand(p.id);const low=Number(p.reorder_level)>0&&oh<=Number(p.reorder_level);
     return `<tr><td><strong>${esc(p.name)}</strong><div class="muted" style="font-size:12px">${esc(p.category||'')}</div></td>
       <td class="muted">${esc(p.sku||'')}</td>
@@ -651,12 +653,15 @@ function openProduct(id){
 async function saveProduct(){
   if(!pName.value.trim()){toast('Product name is required');return;}
   const id=pId.value||crypto.randomUUID();
+  const code=pSku.value.trim();
+  if(code){const dup=products.find(x=>x.id!==id&&!x.deleted&&(x.sku||'').trim()===code);
+    if(dup){toast('Code "'+code+'" is already used by '+dup.name);return;}}
   const existing=pId.value?await getOne('products',id):null;
-  const p={...(existing||{}),id,sku:pSku.value.trim(),category:pCategory.value.trim(),name:pName.value.trim(),unit:pUnit.value.trim(),
+  const p={...(existing||{}),id,sku:code||null,category:pCategory.value.trim(),name:pName.value.trim(),unit:pUnit.value.trim(),
     opening_qty:+pOpening.value||0,cost_price:+pCost.value||0,sale_price:+pSale.value||0,reorder_level:+pReorder.value||0,
     barcode:pBarcode.value.trim()||null,supplier_id:pSupplier.value||null,deleted:false};
   await localWrite('products',p);
-  products=await getAll('products');closeModal('prodOverlay');renderProducts();renderDashboard();
+  await loadLocal();closeModal('prodOverlay');renderProducts();renderDashboard();
 }
 function fillParty(t){
   const list=(t==='in'?suppliers:customers).filter(c=>!c.deleted);
@@ -688,7 +693,7 @@ async function saveMovement(){
     supplier_id:mType.value==='in'?(mParty.value||null):null,
     customer_id:mType.value==='out'?(mParty.value||null):null,deleted:false};
   await localWrite('movements',m);
-  movements=await getAll('movements');closeModal('movOverlay');renderMovements();renderDashboard();
+  await loadLocal();closeModal('movOverlay');renderMovements();renderDashboard();
 }
 function partyName(m){
   if(m.type==='in'&&m.supplier_id){const s=suppliers.find(x=>x.id===m.supplier_id);return s?s.name:'';}
@@ -713,12 +718,12 @@ async function delMovement(id){
   if(!can.delete()){toast('Only owners and managers can delete.');return;}
   if(!confirm('Delete this movement?'))return;
   const m=await getOne('movements',id);m.deleted=true;await localWrite('movements',m);
-  movements=await getAll('movements');renderMovements();renderDashboard();
+  await loadLocal();renderMovements();renderDashboard();
 }
 async function setPaid(id){
   if(!can.delete()){toast('Only owners and managers can change payment status.');return;}
   const m=await getOne('movements',id);if(!m)return;m.paid=true;await localWrite('movements',m);
-  movements=await getAll('movements');renderMovements();renderDashboard();toast('Marked as paid');
+  await loadLocal();renderMovements();renderDashboard();toast('Marked as paid');
 }
 
 /* ---------- Barcode scanning ---------- */
@@ -812,7 +817,7 @@ async function saveContact(){
   const existing=cId.value?await getOne(table,id):null;
   const c={...(existing||{}),id,name:cName.value.trim(),phone:cPhone.value.trim(),email:cEmail.value.trim(),note:cNote.value.trim(),deleted:false};
   await localWrite(table,c);
-  if(kind==='customers')customers=await getAll('customers');else suppliers=await getAll('suppliers');
+  await loadLocal();
   closeModal('contactOverlay');renderContacts();
 }
 /* ============================================================
@@ -867,7 +872,7 @@ function renderPnL(f,t){
     <div class="note">Costing: <strong>${org.costing==='average'?'Weighted average':'Standard cost'}</strong>.</div>`;
   let csv=`${org.name} - Profit & Loss,${f} to ${t}\n\nMetric,Amount (${org.currency})\n`;
   csv+=`Sales revenue,${revenue}\nCOGS,${cogs}\nGross profit,${gross}\nMargin %,${margin.toFixed(1)}\nPurchases,${purchases}\nOpening inventory,${openVal}\nClosing inventory,${closeVal}\n\n`;
-  csv+=`Product,SKU,Sold qty,Revenue,Gross profit,Purchased qty,Closing qty\n`;
+  csv+=`Product,Code,Sold qty,Revenue,Gross profit,Purchased qty,Closing qty\n`;
   rows.forEach(x=>csv+=`${csvEsc(x.name)},${csvEsc(x.sku)},${x.sQ},${x.sV},${x.profit},${x.pQ},${x.close}\n`);
   setReport(`pnl_${f}_${t}`,csv);
 }
@@ -923,7 +928,7 @@ function renderValuation(t){
       <tfoot><tr style="font-weight:700;background:#faf7f0"><td>Total</td><td></td><td></td><td></td><td class="num">${fmt(tCost)}</td><td class="num">${fmt(tRetail)}</td></tr></tfoot></table>`
       :'<div class="empty">No stock on hand at this date.</div>'}</div>
     <div class="note">Valued at <strong>${org.costing==='average'?'weighted-average':'standard'}</strong> cost. Uses the <strong>To</strong> date as the "as at" date.</div>`;
-  let csv=`${org.name} - Inventory Valuation,as at ${t}\n\nProduct,SKU,Category,On hand,Unit cost,Cost value,Retail value\n`;
+  let csv=`${org.name} - Inventory Valuation,as at ${t}\n\nProduct,Code,Category,On hand,Unit cost,Cost value,Retail value\n`;
   rows.forEach(r=>csv+=`${csvEsc(r.name)},${csvEsc(r.sku)},${csvEsc(r.cat)},${r.q},${r.uc},${r.cost},${r.retail}\n`);
   csv+=`Total,,,,,${tCost},${tRetail}\n`;
   setReport(`valuation_${t}`,csv);
@@ -966,7 +971,7 @@ function renderAging(t){
       <tfoot><tr style="font-weight:700;background:#faf7f0"><td>Total</td>${totals.map(v=>`<td class="num">${fmt(v)}</td>`).join('')}<td class="num">${fmt(grand)}</td></tr></tfoot></table>`
       :'<div class="empty">No stock on hand at this date.</div>'}</div>
     <div class="note">Ages computed by FIFO (oldest stock sold first), valued at purchase cost of each remaining layer. Opening stock is aged from a product's first recorded transaction. Days bucketed relative to the <strong>To</strong> date.</div>`;
-  let csv=`${org.name} - Stock Aging,as at ${t}\n\nProduct,SKU,${B.join(',')},Total\n`;
+  let csv=`${org.name} - Stock Aging,as at ${t}\n\nProduct,Code,${B.join(',')},Total\n`;
   rows.forEach(r=>csv+=`${csvEsc(r.name)},${csvEsc(r.sku)},${r.buckets.join(',')},${r.tot}\n`);
   csv+=`Total,,${totals.join(',')},${grand}\n`;
   setReport(`aging_${t}`,csv);
