@@ -98,6 +98,9 @@
   .toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:11px 18px;border-radius:99px;font-size:13.5px;z-index:80;opacity:0;transition:.25s;pointer-events:none}
   .toast.show{opacity:1}
   .setup-banner{background:#fbe6cf;border:1px solid var(--accent);color:#7a4a16;padding:12px 16px;border-radius:12px;margin-bottom:18px;font-size:13.5px}
+  .orgrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 14px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;cursor:pointer;background:#fff}
+  .orgrow:hover{border-color:var(--green)}
+  .orgrow.active{border-color:var(--green);background:#f1f6f2}
   @media print{header.top,nav.tabs,.fab,.filters .btn,.no-print{display:none!important}body{background:#fff}.app{padding:0}}
 </style>
 </head>
@@ -119,6 +122,16 @@
   </div>
 </div>
 
+<!-- Company switcher -->
+<div class="overlay" id="orgSwitchOverlay">
+  <div class="modal">
+    <h3 class="serif">Your companies</h3>
+    <div id="orgSwitchList" style="margin-bottom:14px"></div>
+    <button class="btn primary" style="width:100%" onclick="newCompanyFromSwitcher()">+ Create another company</button>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal('orgSwitchOverlay')">Close</button></div>
+  </div>
+</div>
+
 <!-- ===================== FIRST-RUN: CREATE TEAM ===================== -->
 <div class="overlay" id="orgOverlay">
   <div class="modal">
@@ -133,7 +146,7 @@
 <!-- ===================== MAIN APP ===================== -->
 <div class="app" id="app">
   <header class="top">
-    <div class="brand"><div class="logo">S</div><h1 id="bizName">StockTrack</h1></div>
+    <div class="brand" onclick="openOrgSwitch()" style="cursor:pointer"><div class="logo">S</div><h1 id="bizName">StockTrack</h1><span style="opacity:.7;font-size:13px">▾</span></div>
     <div class="right">
       <div class="sync"><span class="dot" id="netdot"></span><span id="netlabel">Online</span></div>
     </div>
@@ -381,7 +394,7 @@ function getMeta(k){return new Promise(res=>{const r=store('meta','readonly').ge
 function setMeta(k,v){return put('meta',{k,v});}
 
 /* ---------- State ---------- */
-let session=null, orgId=null, role='staff', org={name:'StockTrack',currency:'RWF',costing:'standard'};
+let session=null, orgId=null, role='staff', org={name:'StockTrack',currency:'RWF',costing:'standard'}, orgs=[];
 let products=[], movements=[], suppliers=[], customers=[];
 let signupMode=false, syncing=false;
 
@@ -426,18 +439,25 @@ async function signOut(){await sb.auth.signOut();location.reload();}
 async function onSignedIn(){
   const {data}=await sb.auth.getSession();
   session=data.session; if(!session)return;
-  // find which org this user belongs to
-  const {data:mems,error}=await sb.from('memberships').select('org_id, role').limit(1);
-  if(error){ // offline? fall back to cached org
-    const cachedOrg=await getMeta('orgId'); const cachedRole=await getMeta('role');
-    if(cachedOrg){orgId=cachedOrg;role=cachedRole||'staff';await loadOrgRow(true);return enterApp();}
+  // load ALL companies this user belongs to
+  const {data:mems,error}=await sb.from('memberships').select('org_id, role');
+  if(error){ // offline — fall back to cached companies
+    const cached=await getMeta('orgs'); const last=await getMeta('activeOrg');
+    if(cached&&cached.length){orgs=cached;setActiveOrg(orgs.find(o=>o.id===last)||orgs[0]);return enterApp();}
     showErr('Could not reach server. Connect once to finish setup.');return;
   }
   if(!mems.length){ document.getElementById('orgOverlay').classList.add('open'); return; }
-  orgId=mems[0].org_id; role=mems[0].role;
-  await setMeta('orgId',orgId); await setMeta('role',role);
-  await loadOrgRow();
+  const {data:orgRows}=await sb.from('organizations').select('*'); // RLS returns only the user's orgs
+  orgs=mems.map(m=>{const o=(orgRows||[]).find(r=>r.id===m.org_id)||{};
+    return {id:m.org_id,role:m.role,name:o.name||'Company',currency:o.currency||'RWF',costing:o.costing||'standard'};});
+  await setMeta('orgs',orgs);
+  const last=await getMeta('activeOrg');
+  setActiveOrg(orgs.find(o=>o.id===last)||orgs[0]);
   enterApp();
+}
+function setActiveOrg(o){
+  if(!o)return; orgId=o.id; role=o.role; org={name:o.name,currency:o.currency,costing:o.costing};
+  setMeta('activeOrg',orgId); setMeta('org',org); setMeta('role',role);
 }
 async function loadOrgRow(fromCache){
   if(fromCache){const c=await getMeta('org');if(c)org=c;return;}
@@ -445,14 +465,34 @@ async function loadOrgRow(fromCache){
   if(data){org={name:data.name,currency:data.currency,costing:data.costing};await setMeta('org',org);}
 }
 async function createOrg(){
-  const name=orgName.value.trim()||'My Business';
-  const {data,error}=await sb.rpc('create_org',{org_name:name,cur:(orgCur.value||'RWF').toUpperCase()});
+  const name=orgName.value.trim()||'My Business';const cur=(orgCur.value||'RWF').toUpperCase();
+  const {data,error}=await sb.rpc('create_org',{org_name:name,cur});
   if(error){toast(error.message);return;}
-  orgId=data; role='owner';
-  await setMeta('orgId',orgId);await setMeta('role',role);
-  org={name,currency:(orgCur.value||'RWF').toUpperCase(),costing:'standard'};await setMeta('org',org);
-  closeModal('orgOverlay'); enterApp();
+  const newOrg={id:data,role:'owner',name,currency:cur,costing:'standard'};
+  orgs.push(newOrg);await setMeta('orgs',orgs);
+  setActiveOrg(newOrg);
+  closeModal('orgOverlay');
+  if(document.getElementById('app').style.display==='block'){await refreshForActiveOrg();toast('Company created');}
+  else enterApp();
 }
+async function refreshForActiveOrg(){
+  document.getElementById('bizName').textContent=org.name;
+  await loadLocal();renderAll();applyRoleUI();setNet();syncNow();
+}
+function openOrgSwitch(){
+  const el=document.getElementById('orgSwitchList');
+  el.innerHTML=orgs.map(o=>`<div class="orgrow${o.id===orgId?' active':''}" onclick="switchOrg('${o.id}')">
+    <div><strong>${esc(o.name)}</strong><div class="muted" style="font-size:12px">${o.currency} · you are ${o.role}</div></div>
+    ${o.id===orgId?'<span class="pill role">current</span>':'<span class="muted" style="font-size:13px">switch →</span>'}</div>`).join('');
+  document.getElementById('orgSwitchOverlay').classList.add('open');
+}
+async function switchOrg(id){
+  if(id===orgId){closeModal('orgSwitchOverlay');return;}
+  const o=orgs.find(x=>x.id===id);if(!o)return;
+  setActiveOrg(o);closeModal('orgSwitchOverlay');
+  await refreshForActiveOrg();
+}
+function newCompanyFromSwitcher(){closeModal('orgSwitchOverlay');orgName.value='';orgCur.value=org.currency||'RWF';document.getElementById('orgOverlay').classList.add('open');}
 
 /* ============================================================
    SYNC ENGINE (offline-first: render from local, sync in background)
@@ -483,7 +523,8 @@ async function flush(){
 }
 async function pull(){
   if(!CONFIGURED||!navigator.onLine||!orgId)return;
-  const last=await getMeta('lastSync')||'1970-01-01T00:00:00Z';
+  const lastKey='lastSync:'+orgId;
+  const last=await getMeta(lastKey)||'1970-01-01T00:00:00Z';
   const pendingIds=new Set((await getAll('outbox')).map(o=>o.id));
   let maxTs=last;
   for(const t of TABLES){
@@ -495,7 +536,7 @@ async function pull(){
       if(row.updated_at>maxTs)maxTs=row.updated_at;
     }
   }
-  await setMeta('lastSync',maxTs);
+  await setMeta(lastKey,maxTs);
 }
 let syncTimer=null;
 function scheduleSync(){clearTimeout(syncTimer);syncTimer=setTimeout(syncNow,400);}
@@ -954,6 +995,7 @@ async function saveOrg(){
   org={name:setBiz.value||'My Business',currency:(setCur.value||'RWF').toUpperCase(),costing:setCost.value};
   await setMeta('org',org);
   if(CONFIGURED&&navigator.onLine){await sb.from('organizations').update({name:org.name,currency:org.currency,costing:org.costing}).eq('id',orgId);}
+  const oe=orgs.find(o=>o.id===orgId);if(oe){oe.name=org.name;oe.currency=org.currency;oe.costing=org.costing;await setMeta('orgs',orgs);}
   document.getElementById('bizName').textContent=org.name;toast('Saved');renderAll();
 }
 async function renderTeamUI(){
@@ -981,7 +1023,9 @@ async function changeRole(uid,newRole){
 /* ============================================================
    BOOT
    ============================================================ */
-async function loadLocal(){products=await getAll('products');movements=await getAll('movements');suppliers=await getAll('suppliers');customers=await getAll('customers');}
+async function loadLocal(){const f=x=>x.org_id===orgId;
+  products=(await getAll('products')).filter(f);movements=(await getAll('movements')).filter(f);
+  suppliers=(await getAll('suppliers')).filter(f);customers=(await getAll('customers')).filter(f);}
 function enterApp(){
   document.getElementById('auth').style.display='none';
   document.getElementById('app').style.display='block';
