@@ -288,7 +288,8 @@
 <!-- Movement modal -->
 <div class="overlay" id="movOverlay">
   <div class="modal">
-    <h3 class="serif">Record movement</h3>
+    <h3 class="serif" id="mTitle">Record movement</h3>
+    <input type="hidden" id="mId">
     <div class="field"><label>Product</label><select id="mProduct"></select></div>
     <div class="grid2">
       <div class="field"><label>Type</label><select id="mType" onchange="onMovTypeChange()">
@@ -297,6 +298,9 @@
         <option value="adjustment">Adjustment</option></select></div>
       <div class="field"><label>Date</label><input type="date" id="mDate"></div>
     </div>
+    <div class="field"><label>Price basis</label><select id="mBasis" onchange="updatePriceLabels()">
+      <option value="unit">Per unit price</option>
+      <option value="total">Total amount for the quantity</option></select></div>
     <div class="grid2">
       <div class="field"><label id="mQtyLabel">Quantity</label><input id="mQty" type="number" step="any"></div>
       <div class="field"><label id="mPriceLabel">Unit price</label><input id="mPrice" type="number" step="any"></div>
@@ -664,31 +668,52 @@ async function saveProduct(){
   await loadLocal();closeModal('prodOverlay');renderProducts();renderDashboard();
 }
 function fillParty(t){
-  const list=(t==='in'?suppliers:customers).filter(c=>!c.deleted);
+  const list=(t==='in'?suppliers:customers).filter(c=>!c.deleted).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
   mPartyLabel.textContent=t==='in'?'Supplier':'Customer';
   mParty.innerHTML='<option value="">— none —</option>'+list.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
 }
+function updatePriceLabels(){
+  const t=mType.value, total=mBasis.value==='total';
+  mPriceLabel.textContent = total
+    ? (t==='out'?'Total sale amount':t==='in'?'Total purchase cost':'Total amount')
+    : (t==='out'?'Sale price (unit)':t==='in'?'Purchase cost (unit)':'Unit cost');
+}
 function onMovTypeChange(){const t=mType.value;
-  mPriceLabel.textContent=t==='out'?'Sale price (unit)':t==='in'?'Purchase cost (unit)':'Unit cost';
   mQtyLabel.textContent=t==='adjustment'?'Quantity (+/-)':'Quantity';
   document.getElementById('mPartyRow').style.display=t==='adjustment'?'none':'grid';
   if(t!=='adjustment')fillParty(t);
+  updatePriceLabels();
 }
-function openMovement(){
-  const live=products.filter(p=>!p.deleted);
+function openMovement(id){
+  const live=products.filter(p=>!p.deleted).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
   if(!live.length){toast('Add a product first.');return;}
-  mProduct.innerHTML=live.map(p=>`<option value="${p.id}">${esc(p.name)} ${p.sku?'('+esc(p.sku)+')':''}</option>`).join('');
-  mType.value='in';mDate.value=today();mQty.value='';mPrice.value='';mRef.value='';mPaid.value='true';onMovTypeChange();
-  // default the supplier to the product's linked supplier
+  mProduct.innerHTML=live.map(p=>`<option value="${p.id}">${esc(p.name)}${p.sku?' ('+esc(p.sku)+')':''}</option>`).join('');
+  mBasis.value='unit';
+  if(id){
+    if(!can.delete()){toast('Only owners and managers can edit movements.');return;}
+    const m=movements.find(x=>x.id===id);if(!m){toast('Movement not found');return;}
+    mTitle.textContent='Edit movement';mId.value=m.id;mProduct.value=m.product_id;mType.value=m.type;mDate.value=m.date;
+    mQty.value=m.qty;mPrice.value=m.unit_price;mRef.value=m.reference||'';
+    onMovTypeChange();
+    mPaid.value=(m.paid===false)?'false':'true';
+    if(m.type==='in')mParty.value=m.supplier_id||'';else if(m.type==='out')mParty.value=m.customer_id||'';
+  }else{
+    mTitle.textContent='Record movement';mId.value='';mType.value='in';mDate.value=today();
+    mQty.value='';mPrice.value='';mRef.value='';mPaid.value='true';onMovTypeChange();
+  }
   mProduct.onchange=()=>{const p=products.find(x=>x.id===mProduct.value);if(mType.value==='in'&&p&&p.supplier_id)mParty.value=p.supplier_id;};
   document.getElementById('movOverlay').classList.add('open');
 }
 async function saveMovement(){
-  const qty=+mQty.value;if(!qty){toast('Enter a quantity');return;}
+  const qtyRaw=+mQty.value;if(!qtyRaw){toast('Enter a quantity');return;}
+  const qtyAbs=Math.abs(qtyRaw);
   const p=products.find(x=>x.id===mProduct.value);
-  let price=+mPrice.value;if(!price)price=mType.value==='out'?(p.sale_price||0):(p.cost_price||0);
-  const m={id:crypto.randomUUID(),product_id:mProduct.value,type:mType.value,
-    qty:mType.value==='adjustment'?qty:Math.abs(qty),unit_price:price,date:mDate.value||today(),
+  const entered=+mPrice.value;
+  let unit = mBasis.value==='total' ? (qtyAbs?entered/qtyAbs:0) : entered;
+  if(!unit)unit=mType.value==='out'?(p.sale_price||0):(p.cost_price||0);
+  const existing=mId.value?await getOne('movements',mId.value):null;
+  const m={...(existing||{}),id:mId.value||crypto.randomUUID(),product_id:mProduct.value,type:mType.value,
+    qty:mType.value==='adjustment'?qtyRaw:qtyAbs,unit_price:unit,date:mDate.value||today(),
     reference:mRef.value.trim(),paid:mType.value==='adjustment'?true:(mPaid.value==='true'),
     supplier_id:mType.value==='in'?(mParty.value||null):null,
     customer_id:mType.value==='out'?(mParty.value||null):null,deleted:false};
@@ -711,7 +736,7 @@ function renderMovements(){
       <td class="num">${num(m.qty)}</td><td class="num">${num(m.unit_price)}</td><td class="num">${fmt(Math.abs(m.qty)*m.unit_price)}</td>
       <td>${m.type==='adjustment'?'':(credit?`<span class="pill out">credit</span>${can.delete()?` <a style="cursor:pointer;color:var(--green);font-weight:600;font-size:12px" onclick="setPaid('${m.id}')">mark paid</a>`:''}`:'<span class="pill in">paid</span>')}</td>
       <td class="muted">${esc(m.reference||'')}</td>
-      ${can.delete()?`<td class="num"><button class="btn danger small" onclick="delMovement('${m.id}')">✕</button></td>`:''}</tr>`;}).join('')}</tbody></table>`
+      ${can.delete()?`<td class="num"><button class="btn ghost small" onclick="openMovement('${m.id}')">Edit</button> <button class="btn danger small" onclick="delMovement('${m.id}')">✕</button></td>`:''}</tr>`;}).join('')}</tbody></table>`
     :'<div class="empty">No movements for this filter.</div>';
 }
 async function delMovement(id){
