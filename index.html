@@ -302,8 +302,8 @@
       <option value="adjustment">Adjustment</option></select>
     <div class="field"><label>Date</label><input type="date" id="mDate"></div>
     <div class="field"><label>Price basis</label><select id="mBasis" onchange="updatePriceLabels()">
-      <option value="unit">Per unit price</option>
-      <option value="total">Total amount for the quantity</option></select></div>
+      <option value="total">Total amount for the quantity</option>
+      <option value="unit">Per unit price</option></select></div>
     <div class="grid2">
       <div class="field"><label id="mQtyLabel">Quantity</label><input id="mQty" type="number" step="any"></div>
       <div class="field"><label id="mPriceLabel">Unit price</label><input id="mPrice" type="number" step="any"></div>
@@ -675,6 +675,9 @@ function fillParty(t){
   mPartyLabel.textContent=t==='in'?'Supplier':'Customer';
   mParty.innerHTML='<option value="">— none —</option>'+list.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
 }
+function selectedUnit(){const p=products.find(x=>x.id===mProduct.value);return p&&p.unit?p.unit:'';}
+function refreshQtyUnit(){const u=selectedUnit();const base=mType.value==='adjustment'?'Quantity (+/-)':'Quantity';
+  mQtyLabel.textContent=base+(u?' — in '+u:'');}
 function updatePriceLabels(){
   const t=mType.value, total=mBasis.value==='total';
   mPriceLabel.textContent = total
@@ -682,7 +685,7 @@ function updatePriceLabels(){
     : (t==='out'?'Sale price (unit)':t==='in'?'Purchase cost (unit)':'Unit cost');
 }
 function onMovTypeChange(){const t=mType.value;
-  mQtyLabel.textContent=t==='adjustment'?'Quantity (+/-)':'Quantity';
+  refreshQtyUnit();
   document.getElementById('mPartyRow').style.display=t==='adjustment'?'none':'grid';
   if(t!=='adjustment')fillParty(t);
   updatePriceLabels();
@@ -691,10 +694,10 @@ function openMovement(id, presetType){
   const live=products.filter(p=>!p.deleted).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
   if(!live.length){toast('Add a product first.');return;}
   mProduct.innerHTML=live.map(p=>`<option value="${p.id}">${esc(p.name)}${p.sku?' ('+esc(p.sku)+')':''}</option>`).join('');
-  mBasis.value='unit';
   if(id){
     if(!can.delete()){toast('Only owners and managers can edit movements.');return;}
     const m=movements.find(x=>x.id===id);if(!m){toast('Movement not found');return;}
+    mBasis.value='unit';
     mTitle.textContent=m.type==='out'?'Edit sale':m.type==='in'?'Edit purchase':'Edit adjustment';
     mId.value=m.id;mProduct.value=m.product_id;mType.value=m.type;mDate.value=m.date;
     mQty.value=m.qty;mPrice.value=m.unit_price;mRef.value=m.reference||'';
@@ -703,10 +706,11 @@ function openMovement(id, presetType){
     if(m.type==='in')mParty.value=m.supplier_id||'';else if(m.type==='out')mParty.value=m.customer_id||'';
   }else{
     const ty=presetType||'out';
+    mBasis.value='total';
     mTitle.textContent=ty==='out'?'Record sale':ty==='in'?'Record purchase':'Stock adjustment';
     mId.value='';mType.value=ty;mDate.value=today();mQty.value='';mPrice.value='';mRef.value='';mPaid.value='true';onMovTypeChange();
   }
-  mProduct.onchange=()=>{const p=products.find(x=>x.id===mProduct.value);if(mType.value==='in'&&p&&p.supplier_id)mParty.value=p.supplier_id;};
+  mProduct.onchange=()=>{const p=products.find(x=>x.id===mProduct.value);if(mType.value==='in'&&p&&p.supplier_id)mParty.value=p.supplier_id;refreshQtyUnit();};
   document.getElementById('movOverlay').classList.add('open');
 }
 async function saveMovement(){
@@ -815,7 +819,7 @@ function scanToSell(){
     if(!p){toast('No product matches barcode '+code);return;}
     openMovement();
     mProduct.value=p.id;mType.value='out';onMovTypeChange();
-    mQty.value=1;mPrice.value=p.sale_price||0;
+    mBasis.value='unit';updatePriceLabels();mQty.value=1;mPrice.value=p.sale_price||0;refreshQtyUnit();
     toast('Loaded: '+p.name);
   });
 }
