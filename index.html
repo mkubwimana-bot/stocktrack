@@ -296,13 +296,11 @@
     <h3 class="serif" id="mTitle">Record movement</h3>
     <input type="hidden" id="mId">
     <div class="field"><label>Product</label><select id="mProduct"></select></div>
-    <div class="grid2">
-      <div class="field"><label>Type</label><select id="mType" onchange="onMovTypeChange()">
-        <option value="in">Stock in (purchase)</option>
-        <option value="out">Stock out (sale)</option>
-        <option value="adjustment">Adjustment</option></select></div>
-      <div class="field"><label>Date</label><input type="date" id="mDate"></div>
-    </div>
+    <select id="mType" style="display:none">
+      <option value="in">Stock in (purchase)</option>
+      <option value="out">Stock out (sale)</option>
+      <option value="adjustment">Adjustment</option></select>
+    <div class="field"><label>Date</label><input type="date" id="mDate"></div>
     <div class="field"><label>Price basis</label><select id="mBasis" onchange="updatePriceLabels()">
       <option value="unit">Per unit price</option>
       <option value="total">Total amount for the quantity</option></select></div>
@@ -697,7 +695,8 @@ function openMovement(id, presetType){
   if(id){
     if(!can.delete()){toast('Only owners and managers can edit movements.');return;}
     const m=movements.find(x=>x.id===id);if(!m){toast('Movement not found');return;}
-    mTitle.textContent='Edit movement';mId.value=m.id;mProduct.value=m.product_id;mType.value=m.type;mDate.value=m.date;
+    mTitle.textContent=m.type==='out'?'Edit sale':m.type==='in'?'Edit purchase':'Edit adjustment';
+    mId.value=m.id;mProduct.value=m.product_id;mType.value=m.type;mDate.value=m.date;
     mQty.value=m.qty;mPrice.value=m.unit_price;mRef.value=m.reference||'';
     onMovTypeChange();
     mPaid.value=(m.paid===false)?'false':'true';
