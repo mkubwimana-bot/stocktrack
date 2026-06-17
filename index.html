@@ -216,8 +216,13 @@
           <option value="cash">Cash flow</option>
           <option value="valuation">Inventory valuation</option>
           <option value="aging">Stock aging</option></select></div>
-        <div class="field"><label>From</label><input type="date" id="repFrom"></div>
-        <div class="field"><label>To</label><input type="date" id="repTo"></div>
+        <div class="field"><label>Period</label><select id="repPeriod" onchange="onPeriodChange()">
+          <option value="today">Today</option>
+          <option value="week">This week</option>
+          <option value="month">This month</option>
+          <option value="custom">Custom</option></select></div>
+        <div class="field"><label>From</label><input type="date" id="repFrom" onchange="repPeriod.value='custom'"></div>
+        <div class="field"><label>To</label><input type="date" id="repTo" onchange="repPeriod.value='custom'"></div>
         <div class="field"><label>&nbsp;</label><button class="btn primary" onclick="runReport()">Generate</button></div>
         <div class="field"><label>&nbsp;</label><button class="btn ghost" onclick="window.print()">Print / PDF</button></div>
         <div class="field"><label>&nbsp;</label><button class="btn ghost" onclick="exportReportCSV()">Export CSV</button></div>
@@ -416,7 +421,8 @@ const can = {
 };
 function fmt(n){n=Number(n)||0;return org.currency+' '+n.toLocaleString(undefined,{maximumFractionDigits:0});}
 function num(n){return (Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:2});}
-function today(){return new Date().toISOString().slice(0,10);}
+function ymd(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function today(){return ymd(new Date());}
 function nowISO(){return new Date().toISOString();}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600);}
@@ -892,6 +898,13 @@ function monthList(f,t){const out=[];let [y,m]=f.slice(0,7).split('-').map(Numbe
   let guard=0;
   while((y<ey||(y===ey&&m<=em))&&guard++<1200){out.push(y+'-'+String(m).padStart(2,'0'));m++;if(m>12){m=1;y++;}}return out;}
 
+function applyPeriod(p){
+  const now=new Date();
+  if(p==='today'){repFrom.value=ymd(now);repTo.value=ymd(now);}
+  else if(p==='week'){const s=new Date(now);s.setDate(now.getDate()-((now.getDay()+6)%7));repFrom.value=ymd(s);repTo.value=ymd(now);}
+  else if(p==='month'){repFrom.value=ymd(new Date(now.getFullYear(),now.getMonth(),1));repTo.value=ymd(now);}
+}
+function onPeriodChange(){const p=repPeriod.value;if(p==='custom')return;applyPeriod(p);runReport();}
 function runReport(){
   const type=document.getElementById('repType').value;
   const f=repFrom.value||'1970-01-01',t=repTo.value||today();
@@ -1098,7 +1111,7 @@ function enterApp(){
   document.getElementById('auth').style.display='none';
   document.getElementById('app').style.display='block';
   document.getElementById('bizName').textContent=org.name;
-  repFrom.value=new Date(Date.now()-30*864e5).toISOString().slice(0,10);repTo.value=today();
+  repPeriod.value='month';applyPeriod('month');
   setNet();applyRoleUI();
   loadLocal().then(()=>{renderAll();syncNow();});
 }
