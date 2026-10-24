@@ -155,6 +155,7 @@
     <button data-view="dashboard" class="active">Dashboard</button>
     <button data-view="products">Products</button>
     <button data-view="movements">Movements</button>
+    <button data-view="expenses">Expenses</button>
     <button data-view="contacts">Contacts</button>
     <button data-view="reports">Reports</button>
     <button data-view="settings">Settings</button>
@@ -207,6 +208,17 @@
       <div class="table-wrap" id="contactTable"></div>
     </section>
 
+    <section class="view" id="expenses">
+      <div class="row"><div><div class="section-title serif">Expenses</div><div class="section-sub">Operating costs (not stock purchases)</div></div>
+        <button class="btn primary" id="addExpenseBtn" onclick="openExpense()">+ Add expense</button></div>
+      <div class="filters">
+        <div class="field"><label>Category</label><select id="expCat" onchange="renderExpenses()"></select></div>
+        <div class="field"><label>From</label><input type="date" id="expFrom" onchange="renderExpenses()"></div>
+        <div class="field"><label>To</label><input type="date" id="expTo" onchange="renderExpenses()"></div>
+      </div>
+      <div id="expTable"></div>
+    </section>
+
     <section class="view" id="reports">
       <div class="section-title serif">Financial report</div>
       <div class="section-sub">Choose any period to generate a statement</div>
@@ -214,6 +226,7 @@
         <div class="field"><label>Report</label><select id="repType" onchange="runReport()">
           <option value="pnl">Profit &amp; Loss</option>
           <option value="cash">Cash flow</option>
+          <option value="expenses">Expenses by category</option>
           <option value="valuation">Inventory valuation</option>
           <option value="aging">Stock aging</option></select></div>
         <div class="field"><label>Period</label><select id="repPeriod" onchange="onPeriodChange()">
@@ -363,6 +376,30 @@
   </div>
 </div>
 
+<!-- Expense modal -->
+<div class="overlay" id="expenseOverlay">
+  <div class="modal">
+    <h3 class="serif" id="expenseTitle">Add expense</h3>
+    <input type="hidden" id="eId">
+    <div class="field"><label>Category</label><select id="eCategory"></select></div>
+    <div class="field"><label>Description</label><input id="eDesc" placeholder="e.g. October office rent"></div>
+    <div class="grid2">
+      <div class="field"><label>Amount</label><input id="eAmount" type="number" step="any"></div>
+      <div class="field"><label>Date</label><input type="date" id="eDate"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Payment</label><select id="ePaid">
+        <option value="true">Paid</option><option value="false">On credit</option></select></div>
+      <div class="field"><label>Vendor (optional)</label><select id="eVendor"></select></div>
+    </div>
+    <div class="field"><label>Reference (optional)</label><input id="eRef" placeholder="receipt / invoice no."></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal('expenseOverlay')">Cancel</button>
+      <button class="btn primary" onclick="saveExpense()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Scanner modal -->
 <div class="overlay" id="scanOverlay">
   <div class="modal">
@@ -388,11 +425,11 @@ const CONFIGURED = !SUPABASE_URL.includes('PASTE_');
 const sb = CONFIGURED ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON) : null;
 
 /* ---------- Local cache (IndexedDB) for offline-first ---------- */
-const DB_NAME='stocktrack', DB_VER=2;
+const DB_NAME='stocktrack', DB_VER=3;
 let db;
 function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open(DB_NAME,DB_VER);
   r.onupgradeneeded=e=>{const d=e.target.result;
-    ['products','movements','suppliers','customers'].forEach(s=>{if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:'id'});});
+    ['products','movements','suppliers','customers','expenses'].forEach(s=>{if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:'id'});});
     if(!d.objectStoreNames.contains('meta'))d.createObjectStore('meta',{keyPath:'k'});
     if(!d.objectStoreNames.contains('outbox'))d.createObjectStore('outbox',{keyPath:'key'});};
   r.onsuccess=e=>{db=e.target.result;res()};r.onerror=e=>rej(e);});}
@@ -408,13 +445,16 @@ function setMeta(k,v){return put('meta',{k,v});}
 
 /* ---------- State ---------- */
 let session=null, orgId=null, role='staff', org={name:'StockTrack',currency:'RWF',costing:'standard'}, orgs=[];
-let products=[], movements=[], suppliers=[], customers=[];
+let products=[], movements=[], suppliers=[], customers=[], expenses=[];
 let signupMode=false, syncing=false;
 
-const TABLES=['suppliers','customers','products','movements'];
+const EXPENSE_CATEGORIES=['Rent & premises','Salaries & wages','Utilities','Transport & logistics','Communication','Office supplies & packaging','Repairs & maintenance','Professional fees','Bank & mobile-money charges','Taxes, licenses & permits','Marketing & advertising','Insurance','Loan interest','Other / miscellaneous'];
+
+const TABLES=['suppliers','customers','products','movements','expenses'];
 const can = {
   editProducts: ()=>['owner','manager'].includes(role),
   editContacts: ()=>['owner','manager'].includes(role),
+  editExpenses: ()=>['owner','manager'].includes(role),
   delete:       ()=>['owner','manager'].includes(role),
   manageTeam:   ()=>role==='owner',
   changeOrg:    ()=>role==='owner',
@@ -590,12 +630,13 @@ function inventoryValue(upto){return products.reduce((s,p)=>s+qtyOnHand(p.id,upt
 /* ============================================================
    RENDER
    ============================================================ */
-function renderAll(){renderDashboard();renderProducts();renderMovements();renderContacts();renderTeamUI();}
+function renderAll(){renderDashboard();renderProducts();renderMovements();renderExpenses();renderContacts();renderTeamUI();}
 function applyRoleUI(){
   document.getElementById('addProdBtn').style.display=can.editProducts()?'':'none';
   document.getElementById('addContactBtn').style.display=can.editContacts()?'':'none';
+  document.getElementById('addExpenseBtn').style.display=can.editExpenses()?'':'none';
   const v=currentView();
-  const hideFab=(v==='products'&&!can.editProducts())||(v==='contacts'&&!can.editContacts());
+  const hideFab=(v==='products'&&!can.editProducts())||(v==='contacts'&&!can.editContacts())||(v==='expenses'&&!can.editExpenses());
   document.getElementById('fab').style.display=hideFab?'none':'grid';
 }
 function currentView(){return document.querySelector('nav.tabs button.active').dataset.view;}
@@ -603,6 +644,7 @@ function quickAdd(){
   const v=currentView();
   if(v==='movements')return openMovement(null,'out');
   if(v==='contacts')return openContact();
+  if(v==='expenses')return openExpense();
   if(v==='products')return can.editProducts()?openProduct():openMovement(null,'out');
   return can.editProducts()?openProduct():openMovement(null,'out');
 }
@@ -614,7 +656,7 @@ document.getElementById('tabs').addEventListener('click',e=>{const b=e.target.cl
   applyRoleUI();
   const v=b.dataset.view;
   if(v==='dashboard')renderDashboard();if(v==='products')renderProducts();if(v==='movements')renderMovements();
-  if(v==='contacts')renderContacts();if(v==='settings')renderSettings();
+  if(v==='expenses')renderExpenses();if(v==='contacts')renderContacts();if(v==='settings')renderSettings();
 });
 
 function renderDashboard(){
@@ -623,14 +665,15 @@ function renderDashboard(){
   const low=products.filter(p=>Number(p.reorder_level)>0&&qtyOnHand(p.id)<=Number(p.reorder_level));
   const retail=products.reduce((s,p)=>s+qtyOnHand(p.id)*(Number(p.sale_price)||0),0);
   const receivable=customers.filter(c=>!c.deleted).reduce((s,c)=>s+contactBalance('customers',c.id),0);
-  const payable=suppliers.filter(s=>!s.deleted).reduce((s,x)=>s+contactBalance('suppliers',x.id),0);
+  const expPayable=expenses.filter(e=>!e.deleted&&e.paid===false).reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const payable=suppliers.filter(s=>!s.deleted).reduce((s,x)=>s+contactBalance('suppliers',x.id),0)+expPayable;
   dashCards.innerHTML=`
     <div class="card"><div class="label">Inventory value (cost)</div><div class="value">${fmt(invVal)}</div><div class="sub">${products.length} products</div></div>
     <div class="card"><div class="label">Retail value</div><div class="value">${fmt(retail)}</div><div class="sub">if all stock sold</div></div>
     <div class="card"><div class="label">Potential margin</div><div class="value small ${retail-invVal>=0?'pos':'neg'}">${fmt(retail-invVal)}</div></div>
     <div class="card"><div class="label">Low stock items</div><div class="value ${low.length?'neg':'pos'}">${low.length}</div></div>
     <div class="card"><div class="label">Receivable (unpaid sales)</div><div class="value small ${receivable>0?'neg':'pos'}">${fmt(receivable)}</div></div>
-    <div class="card"><div class="label">Payable (unpaid purchases)</div><div class="value small ${payable>0?'warn':'pos'}">${fmt(payable)}</div></div>`;
+    <div class="card"><div class="label">Payable (purchases & expenses)</div><div class="value small ${payable>0?'warn':'pos'}">${fmt(payable)}</div></div>`;
   lowStock.innerHTML=low.length?`<table><thead><tr><th>Product</th><th>Code</th><th class="num">On hand</th><th class="num">Reorder at</th></tr></thead><tbody>
     ${low.map(p=>`<tr><td>${esc(p.name)}</td><td class="muted">${esc(p.sku||'')}</td>
       <td class="num"><span class="pill low">${num(qtyOnHand(p.id))} ${esc(p.unit||'')}</span></td>
@@ -888,6 +931,59 @@ async function saveContact(){
   await loadLocal();
   closeModal('contactOverlay');renderContacts();
 }
+
+/* ---------- Expenses ---------- */
+function renderExpenses(){
+  const sel=expCat,cur=sel.value;
+  sel.innerHTML='<option value="">All categories</option>'+EXPENSE_CATEGORIES.map(c=>`<option ${c===cur?'selected':''}>${esc(c)}</option>`).join('');
+  const cat=sel.value,f=expFrom.value,to=expTo.value;
+  const list=expenses.filter(e=>!e.deleted&&(!cat||e.category===cat)&&(!f||e.date>=f)&&(!to||e.date<=to))
+    .sort((a,b)=>b.date.localeCompare(a.date)||(b.updated_at||'').localeCompare(a.updated_at||''));
+  const total=list.reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const vendorName=e=>{if(!e.supplier_id)return'';const s=suppliers.find(x=>x.id===e.supplier_id);return s?s.name:'';};
+  const table=list.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Vendor</th><th class="num">Amount</th><th>Payment</th>${can.editExpenses()?'<th></th>':''}</tr></thead><tbody>
+  ${list.map(e=>{const credit=e.paid===false;return `<tr><td>${e.date}</td><td>${esc(e.category||'')}</td>
+    <td>${esc(e.description||'')}</td><td class="muted">${esc(vendorName(e))}</td>
+    <td class="num">${fmt(e.amount)}</td>
+    <td>${credit?`<span class="pill out">credit</span>${can.editExpenses()?` <a style="cursor:pointer;color:var(--green);font-weight:600;font-size:12px" onclick="payExpense('${e.id}')">mark paid</a>`:''}`:'<span class="pill in">paid</span>'}</td>
+    ${can.editExpenses()?`<td class="num"><button class="btn ghost small" onclick="openExpense('${e.id}')">Edit</button> <button class="btn danger small" onclick="delExpense('${e.id}')">✕</button></td>`:''}</tr>`;}).join('')}</tbody>
+    <tfoot><tr style="font-weight:700;background:#faf7f0"><td>Total</td><td></td><td></td><td></td><td class="num">${fmt(total)}</td><td></td>${can.editExpenses()?'<td></td>':''}</tr></tfoot></table></div>`
+    :'<div class="table-wrap"><div class="empty">No expenses for this filter.</div></div>';
+  expTable.innerHTML=table;
+}
+function openExpense(id){
+  if(!can.editExpenses()){toast('Only owners and managers can record expenses.');return;}
+  eCategory.innerHTML=EXPENSE_CATEGORIES.map(c=>`<option>${esc(c)}</option>`).join('');
+  eVendor.innerHTML='<option value="">— none —</option>'+suppliers.filter(s=>!s.deleted).sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  if(id){const e=expenses.find(x=>x.id===id);if(!e){toast('Expense not found');return;}
+    expenseTitle.textContent='Edit expense';eId.value=e.id;eCategory.value=e.category||'Other / miscellaneous';
+    eDesc.value=e.description||'';eAmount.value=e.amount||'';eDate.value=e.date;ePaid.value=(e.paid===false)?'false':'true';
+    eVendor.value=e.supplier_id||'';eRef.value=e.reference||'';
+  }else{expenseTitle.textContent='Add expense';eId.value='';eCategory.value='Rent & premises';
+    eDesc.value='';eAmount.value='';eDate.value=today();ePaid.value='true';eVendor.value='';eRef.value='';}
+  document.getElementById('expenseOverlay').classList.add('open');
+}
+async function saveExpense(){
+  const amt=+eAmount.value;if(!amt){toast('Enter an amount');return;}
+  const existing=eId.value?await getOne('expenses',eId.value):null;
+  const e={...(existing||{}),id:eId.value||crypto.randomUUID(),category:eCategory.value,description:eDesc.value.trim(),
+    amount:amt,date:eDate.value||today(),paid:ePaid.value==='true',supplier_id:eVendor.value||null,
+    reference:eRef.value.trim(),deleted:false};
+  await localWrite('expenses',e);
+  await loadLocal();closeModal('expenseOverlay');renderExpenses();renderDashboard();
+}
+async function delExpense(id){
+  if(!can.editExpenses()){toast('Only owners and managers can delete.');return;}
+  if(!confirm('Delete this expense?'))return;
+  const e=await getOne('expenses',id);if(!e)return;e.deleted=true;await localWrite('expenses',e);
+  await loadLocal();renderExpenses();renderDashboard();
+}
+async function payExpense(id){
+  if(!can.editExpenses()){toast('Only owners and managers can change payment status.');return;}
+  const e=await getOne('expenses',id);if(!e)return;e.paid=true;await localWrite('expenses',e);
+  await loadLocal();renderExpenses();renderDashboard();toast('Marked as paid');
+}
+
 /* ============================================================
    REPORTS
    ============================================================ */
@@ -910,6 +1006,7 @@ function runReport(){
   const f=repFrom.value||'1970-01-01',t=repTo.value||today();
   if(type==='pnl')renderPnL(f,t);
   else if(type==='cash')renderCashFlow(f,t);
+  else if(type==='expenses')renderExpensesReport(f,t);
   else if(type==='valuation')renderValuation(t);
   else if(type==='aging')renderAging(t);
 }
@@ -923,6 +1020,10 @@ function renderPnL(f,t){
   const cogs=sales.reduce((s,m)=>{const p=products.find(x=>x.id===m.product_id);return s+m.qty*(p?unitCost(p):0);},0);
   const purchases=purch.reduce((s,m)=>s+m.qty*m.unit_price,0);
   const gross=revenue-cogs,margin=revenue>0?gross/revenue*100:0;
+  const exp=expenses.filter(e=>!e.deleted&&e.date>=f&&e.date<=t);
+  const expByCat=EXPENSE_CATEGORIES.map(c=>({cat:c,amt:exp.filter(e=>e.category===c).reduce((s,e)=>s+(Number(e.amount)||0),0)})).filter(r=>r.amt>0);
+  const totalExp=exp.reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const net=gross-totalExp,netMargin=revenue>0?net/revenue*100:0;
   const openVal=inventoryValue(prevDay(f)),closeVal=inventoryValue(t);
   const rows=products.map(p=>{const sQ=sales.filter(m=>m.product_id===p.id).reduce((s,m)=>s+m.qty,0);
     const sV=sales.filter(m=>m.product_id===p.id).reduce((s,m)=>s+m.qty*m.unit_price,0);
@@ -934,10 +1035,16 @@ function renderPnL(f,t){
       <div class="card"><div class="label">Sales revenue</div><div class="value">${fmt(revenue)}</div><div class="sub">${sales.length} sales</div></div>
       <div class="card"><div class="label">COGS</div><div class="value small">${fmt(cogs)}</div></div>
       <div class="card"><div class="label">Gross profit</div><div class="value ${gross>=0?'pos':'neg'}">${fmt(gross)}</div><div class="sub">${margin.toFixed(1)}% margin</div></div>
+      <div class="card"><div class="label">Operating expenses</div><div class="value small">${fmt(totalExp)}</div></div>
+      <div class="card"><div class="label">Net profit</div><div class="value ${net>=0?'pos':'neg'}">${fmt(net)}</div><div class="sub">${netMargin.toFixed(1)}% net margin</div></div>
       <div class="card"><div class="label">Purchases</div><div class="value small">${fmt(purchases)}</div><div class="sub">${purch.length} receipts</div></div>
       <div class="card"><div class="label">Opening inventory</div><div class="value small">${fmt(openVal)}</div><div class="sub">at ${f}</div></div>
       <div class="card"><div class="label">Closing inventory</div><div class="value small">${fmt(closeVal)}</div><div class="sub">at ${t}</div></div>
     </div>
+    ${expByCat.length?`<div class="report-head"><h3 class="serif">Operating expenses</h3></div>
+    <div class="table-wrap"><table><thead><tr><th>Category</th><th class="num">Amount</th></tr></thead>
+      <tbody>${expByCat.map(r=>`<tr><td>${esc(r.cat)}</td><td class="num">${fmt(r.amt)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr style="font-weight:700;background:#faf7f0"><td>Total expenses</td><td class="num">${fmt(totalExp)}</td></tr></tfoot></table></div>`:''}
     <div class="report-head"><h3 class="serif">Product breakdown</h3></div>
     <div class="table-wrap">${rows.length?`<table><thead><tr><th>Product</th><th class="num">Sold</th><th class="num">Revenue</th><th class="num">Gross profit</th><th class="num">Purchased</th><th class="num">Closing qty</th></tr></thead>
       <tbody>${rows.map(r=>`<tr><td>${esc(r.name)}<div class="muted" style="font-size:12px">${esc(r.sku||'')}</div></td>
@@ -947,7 +1054,8 @@ function renderPnL(f,t){
       :'<div class="empty">No activity in this period.</div>'}</div>
     <div class="note">Costing: <strong>${org.costing==='average'?'Weighted average':'Standard cost'}</strong>.</div>`;
   let csv=`${org.name} - Profit & Loss,${f} to ${t}\n\nMetric,Amount (${org.currency})\n`;
-  csv+=`Sales revenue,${revenue}\nCOGS,${cogs}\nGross profit,${gross}\nMargin %,${margin.toFixed(1)}\nPurchases,${purchases}\nOpening inventory,${openVal}\nClosing inventory,${closeVal}\n\n`;
+  csv+=`Sales revenue,${revenue}\nCOGS,${cogs}\nGross profit,${gross}\nGross margin %,${margin.toFixed(1)}\nOperating expenses,${totalExp}\nNet profit,${net}\nNet margin %,${netMargin.toFixed(1)}\nPurchases,${purchases}\nOpening inventory,${openVal}\nClosing inventory,${closeVal}\n\n`;
+  if(expByCat.length){csv+=`Expense category,Amount\n`;expByCat.forEach(r=>csv+=`${csvEsc(r.cat)},${r.amt}\n`);csv+=`\n`;}
   csv+=`Product,Code,Sold qty,Revenue,Gross profit,Purchased qty,Closing qty\n`;
   rows.forEach(x=>csv+=`${csvEsc(x.name)},${csvEsc(x.sku)},${x.sQ},${x.sV},${x.profit},${x.pQ},${x.close}\n`);
   setReport(`pnl_${f}_${t}`,csv);
@@ -958,22 +1066,28 @@ function renderCashFlow(f,t){
   const inP=m=>!m.deleted&&m.date>=f&&m.date<=t;
   const val=m=>Math.abs(m.qty)*m.unit_price;
   const sales=movements.filter(m=>m.type==='out'&&inP(m)),purch=movements.filter(m=>m.type==='in'&&inP(m));
+  const exp=expenses.filter(e=>!e.deleted&&e.date>=f&&e.date<=t);
+  const eval_=e=>Number(e.amount)||0;
   const inflow=sales.filter(m=>m.paid!==false).reduce((s,m)=>s+val(m),0);
-  const outflow=purch.filter(m=>m.paid!==false).reduce((s,m)=>s+val(m),0);
+  const outPurch=purch.filter(m=>m.paid!==false).reduce((s,m)=>s+val(m),0);
+  const outExp=exp.filter(e=>e.paid!==false).reduce((s,e)=>s+eval_(e),0);
+  const outflow=outPurch+outExp;
   const creditSales=sales.filter(m=>m.paid===false).reduce((s,m)=>s+val(m),0);
   const creditPurch=purch.filter(m=>m.paid===false).reduce((s,m)=>s+val(m),0);
+  const creditExp=exp.filter(e=>e.paid===false).reduce((s,e)=>s+eval_(e),0);
   const net=inflow-outflow;
   const months=monthList(f,t).map(mo=>{
     const ci=sales.filter(m=>m.paid!==false&&m.date.slice(0,7)===mo).reduce((s,m)=>s+val(m),0);
-    const co=purch.filter(m=>m.paid!==false&&m.date.slice(0,7)===mo).reduce((s,m)=>s+val(m),0);
+    const co=purch.filter(m=>m.paid!==false&&m.date.slice(0,7)===mo).reduce((s,m)=>s+val(m),0)
+      +exp.filter(e=>e.paid!==false&&e.date.slice(0,7)===mo).reduce((s,e)=>s+eval_(e),0);
     return {mo,ci,co,net:ci-co};});
   reportBody.innerHTML=reportTitle('Cash Flow',`${f} to ${t}`)+`
     <div class="cards" style="margin-top:18px">
       <div class="card"><div class="label">Cash inflow</div><div class="value pos">${fmt(inflow)}</div><div class="sub">paid sales</div></div>
-      <div class="card"><div class="label">Cash outflow</div><div class="value neg">${fmt(outflow)}</div><div class="sub">paid purchases</div></div>
+      <div class="card"><div class="label">Cash outflow</div><div class="value neg">${fmt(outflow)}</div><div class="sub">purchases ${fmt(outPurch)} · expenses ${fmt(outExp)}</div></div>
       <div class="card"><div class="label">Net cash flow</div><div class="value ${net>=0?'pos':'neg'}">${fmt(net)}</div></div>
       <div class="card"><div class="label">Credit sales (not yet cash)</div><div class="value small warn">${fmt(creditSales)}</div></div>
-      <div class="card"><div class="label">Credit purchases (not yet cash)</div><div class="value small warn">${fmt(creditPurch)}</div></div>
+      <div class="card"><div class="label">Credit purchases & expenses</div><div class="value small warn">${fmt(creditPurch+creditExp)}</div></div>
     </div>
     <div class="report-head"><h3 class="serif">Monthly cash movement</h3></div>
     <div class="table-wrap"><table><thead><tr><th>Month</th><th class="num">Cash in</th><th class="num">Cash out</th><th class="num">Net</th></tr></thead>
@@ -981,9 +1095,32 @@ function renderCashFlow(f,t){
       <tfoot><tr style="font-weight:700;background:#faf7f0"><td>Total</td><td class="num">${fmt(inflow)}</td><td class="num">${fmt(outflow)}</td><td class="num ${net>=0?'pos':'neg'}">${fmt(net)}</td></tr></tfoot></table></div>
     <div class="note">Cash is counted on a transaction's date when it's marked <strong>Paid</strong>. Items still <strong>On credit</strong> are listed separately and become cash when you mark them paid (Movements tab). Note: there's no separate settlement-date field, so a credit item settled later is treated as paid on its original date.</div>`;
   let csv=`${org.name} - Cash Flow,${f} to ${t}\n\nMetric,Amount (${org.currency})\n`;
-  csv+=`Cash inflow,${inflow}\nCash outflow,${outflow}\nNet cash flow,${net}\nCredit sales,${creditSales}\nCredit purchases,${creditPurch}\n\nMonth,Cash in,Cash out,Net\n`;
+  csv+=`Cash inflow,${inflow}\nCash outflow,${outflow}\n  of which purchases,${outPurch}\n  of which expenses,${outExp}\nNet cash flow,${net}\nCredit sales,${creditSales}\nCredit purchases,${creditPurch}\nCredit expenses,${creditExp}\n\nMonth,Cash in,Cash out,Net\n`;
   months.forEach(r=>csv+=`${r.mo},${r.ci},${r.co},${r.net}\n`);
   setReport(`cashflow_${f}_${t}`,csv);
+}
+
+/* ---------- Expenses by category ---------- */
+function renderExpensesReport(f,t){
+  const exp=expenses.filter(e=>!e.deleted&&e.date>=f&&e.date<=t);
+  const total=exp.reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const paid=exp.filter(e=>e.paid!==false).reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const unpaid=total-paid;
+  const rows=EXPENSE_CATEGORIES.map(c=>{const items=exp.filter(e=>e.category===c);
+    return {cat:c,amt:items.reduce((s,e)=>s+(Number(e.amount)||0),0),n:items.length};}).filter(r=>r.amt>0).sort((a,b)=>b.amt-a.amt);
+  reportBody.innerHTML=reportTitle('Expenses by Category',`${f} to ${t}`)+`
+    <div class="cards" style="margin-top:18px">
+      <div class="card"><div class="label">Total expenses</div><div class="value">${fmt(total)}</div><div class="sub">${exp.length} entries</div></div>
+      <div class="card"><div class="label">Paid</div><div class="value small">${fmt(paid)}</div></div>
+      <div class="card"><div class="label">Unpaid (credit)</div><div class="value small ${unpaid>0?'warn':'pos'}">${fmt(unpaid)}</div></div>
+    </div>
+    <div class="table-wrap">${rows.length?`<table><thead><tr><th>Category</th><th class="num">Entries</th><th class="num">Amount</th><th class="num">% of total</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr><td>${esc(r.cat)}</td><td class="num">${r.n}</td><td class="num">${fmt(r.amt)}</td><td class="num">${total>0?(r.amt/total*100).toFixed(1):'0'}%</td></tr>`).join('')}</tbody>
+      <tfoot><tr style="font-weight:700;background:#faf7f0"><td>Total</td><td></td><td class="num">${fmt(total)}</td><td class="num">100%</td></tr></tfoot></table>`
+      :'<div class="empty">No expenses in this period.</div>'}</div>`;
+  let csv=`${org.name} - Expenses by Category,${f} to ${t}\n\nTotal,${total}\nPaid,${paid}\nUnpaid,${unpaid}\n\nCategory,Entries,Amount,% of total\n`;
+  rows.forEach(r=>csv+=`${csvEsc(r.cat)},${r.n},${r.amt},${total>0?(r.amt/total*100).toFixed(1):'0'}\n`);
+  setReport(`expenses_${f}_${t}`,csv);
 }
 
 /* ---------- Inventory valuation (as at a date) ---------- */
@@ -1106,7 +1243,8 @@ async function changeRole(uid,newRole){
    ============================================================ */
 async function loadLocal(){const f=x=>x.org_id===orgId;
   products=(await getAll('products')).filter(f);movements=(await getAll('movements')).filter(f);
-  suppliers=(await getAll('suppliers')).filter(f);customers=(await getAll('customers')).filter(f);}
+  suppliers=(await getAll('suppliers')).filter(f);customers=(await getAll('customers')).filter(f);
+  expenses=(await getAll('expenses')).filter(f);}
 function enterApp(){
   document.getElementById('auth').style.display='none';
   document.getElementById('app').style.display='block';
