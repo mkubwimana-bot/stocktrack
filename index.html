@@ -320,13 +320,14 @@
         <option value="out">Stock out (sale)</option>
         <option value="adjustment">Adjustment</option></select></div>
     <div class="field"><label>Date</label><input type="date" id="mDate"></div>
-    <div class="field"><label>Price basis</label><select id="mBasis" onchange="updatePriceLabels()">
+    <div class="field" id="mBasisField"><label>Price basis</label><select id="mBasis" onchange="updatePriceLabels()">
       <option value="total">Total amount for the quantity</option>
       <option value="unit">Per unit price</option></select></div>
     <div class="grid2">
       <div class="field"><label id="mQtyLabel">Quantity</label><input id="mQty" type="number" step="any"></div>
-      <div class="field"><label id="mPriceLabel">Unit price</label><input id="mPrice" type="number" step="any"></div>
+      <div class="field" id="mPriceField"><label id="mPriceLabel">Unit price</label><input id="mPrice" type="number" step="any"></div>
     </div>
+    <div class="note" id="mAdjNote" style="display:none">Adjustments are valued automatically at the product's current cost.</div>
     <div class="grid2" id="mPartyRow">
       <div class="field"><label id="mPartyLabel">Customer</label><select id="mParty"></select></div>
       <div class="field"><label>Payment</label><select id="mPaid">
@@ -740,8 +741,12 @@ function onMovTypeChange(){const t=mType.value;
     ? (t==='out'?'Edit sale':t==='in'?'Edit purchase':'Edit adjustment')
     : (t==='out'?'Record sale':t==='in'?'Record purchase':'Stock adjustment');
   refreshQtyUnit();
-  document.getElementById('mPartyRow').style.display=t==='adjustment'?'none':'grid';
-  if(t!=='adjustment')fillParty(t);
+  const adj=t==='adjustment';
+  document.getElementById('mPartyRow').style.display=adj?'none':'grid';
+  document.getElementById('mBasisField').style.display=adj?'none':'';
+  document.getElementById('mPriceField').style.display=adj?'none':'';
+  document.getElementById('mAdjNote').style.display=adj?'':'none';
+  if(!adj)fillParty(t);
   updatePriceLabels();
 }
 function openMovement(id, presetType){
@@ -773,9 +778,14 @@ async function saveMovement(){
   const qtyRaw=+mQty.value;if(!qtyRaw){toast('Enter a quantity');return;}
   const qtyAbs=Math.abs(qtyRaw);
   const p=products.find(x=>x.id===mProduct.value);
-  const entered=+mPrice.value;
-  let unit = mBasis.value==='total' ? (qtyAbs?entered/qtyAbs:0) : entered;
-  if(!unit)unit=mType.value==='out'?(p.sale_price||0):(p.cost_price||0);
+  let unit;
+  if(mType.value==='adjustment'){
+    unit=unitCost(p); // auto: weighted-average (or standard) cost, no manual entry
+  }else{
+    const entered=+mPrice.value;
+    unit = mBasis.value==='total' ? (qtyAbs?entered/qtyAbs:0) : entered;
+    if(!unit)unit=mType.value==='out'?(p.sale_price||0):(p.cost_price||0);
+  }
   const existing=mId.value?await getOne('movements',mId.value):null;
   const m={...(existing||{}),id:mId.value||crypto.randomUUID(),product_id:mProduct.value,type:mType.value,
     qty:mType.value==='adjustment'?qtyRaw:qtyAbs,unit_price:unit,date:mDate.value||today(),
